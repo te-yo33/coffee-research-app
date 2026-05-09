@@ -146,7 +146,6 @@ def get_worksheet():
 
 def load_data():
     worksheet = get_worksheet()
-
     values = worksheet.get_all_values()
 
     if not values:
@@ -205,259 +204,499 @@ st.set_page_config(
 # =========================
 st.markdown("""
 <style>
+/* =========================================================
+   LIGHT ROAST COFFEE LAB - Premium Dashboard Theme
+========================================================= */
+
+/* ===== 全体背景 ===== */
 .stApp {
     background:
-        radial-gradient(circle at top left, rgba(205, 133, 63, 0.30), transparent 32%),
-        radial-gradient(circle at bottom right, rgba(111, 78, 55, 0.30), transparent 36%),
-        linear-gradient(135deg, #160d08 0%, #2b1a12 45%, #0f0b08 100%);
-    color: #f7efe7;
+        radial-gradient(circle at 8% 5%, rgba(255, 186, 105, 0.22), transparent 28%),
+        radial-gradient(circle at 92% 12%, rgba(159, 89, 38, 0.22), transparent 32%),
+        radial-gradient(circle at 50% 100%, rgba(65, 36, 22, 0.72), transparent 45%),
+        linear-gradient(135deg, #090604 0%, #160d08 35%, #28160d 70%, #0b0705 100%);
+    color: #fff6ea;
 }
 
+/* ===== メインコンテナ ===== */
 .block-container {
     padding-top: 2rem;
-    padding-bottom: 3rem;
-    max-width: 1220px;
+    padding-bottom: 4rem;
+    max-width: 1240px;
 }
 
+/* ===== 全体フォント ===== */
 html, body, [class*="css"] {
     font-family: "Yu Gothic", "Hiragino Sans", "Meiryo", sans-serif;
 }
 
+/* ===== 文字色の基本 ===== */
+p, span, div {
+    color: inherit;
+}
+
+/* ===== 見出し ===== */
 h1, h2, h3 {
-    color: #fff3e6 !important;
-    font-weight: 900 !important;
+    color: #fff5e6 !important;
+    font-weight: 950 !important;
     letter-spacing: 0.02em;
 }
 
-h3 {
-    color: #ffe3c2 !important;
+h2 {
+    padding-top: 0.35rem;
+    padding-bottom: 0.15rem;
+    border-bottom: 1px solid rgba(255, 209, 160, 0.22);
 }
 
+h3 {
+    color: #ffd9a8 !important;
+}
+
+/* =========================================================
+   Hero Header
+========================================================= */
 .hero-card {
-    padding: 30px 34px;
-    border-radius: 30px;
+    position: relative;
+    overflow: hidden;
+    padding: 34px 38px;
+    border-radius: 34px;
     background:
-        linear-gradient(135deg, rgba(255,255,255,0.16), rgba(255,255,255,0.045));
-    border: 1px solid rgba(255,255,255,0.20);
-    box-shadow: 0 20px 60px rgba(0,0,0,0.34);
-    margin-bottom: 24px;
-    backdrop-filter: blur(12px);
+        linear-gradient(135deg, rgba(255,255,255,0.18), rgba(255,255,255,0.045)),
+        linear-gradient(135deg, rgba(255, 181, 97, 0.10), rgba(80, 37, 17, 0.20));
+    border: 1px solid rgba(255, 226, 188, 0.26);
+    box-shadow:
+        0 22px 70px rgba(0,0,0,0.46),
+        inset 0 1px 0 rgba(255,255,255,0.18);
+    margin-bottom: 26px;
+    backdrop-filter: blur(16px);
+}
+
+.hero-card::before {
+    content: "";
+    position: absolute;
+    top: -80px;
+    right: -90px;
+    width: 260px;
+    height: 260px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(255, 193, 121, 0.35), transparent 65%);
+    filter: blur(4px);
+}
+
+.hero-card::after {
+    content: "";
+    position: absolute;
+    bottom: -95px;
+    left: -80px;
+    width: 260px;
+    height: 260px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(164, 91, 45, 0.30), transparent 65%);
+    filter: blur(4px);
 }
 
 .hero-label {
-    font-size: 14px;
-    letter-spacing: 0.22em;
-    color: #f2b66d;
-    font-weight: 900;
-    margin-bottom: 8px;
+    position: relative;
+    z-index: 2;
+    display: inline-block;
+    padding: 7px 12px;
+    border-radius: 999px;
+    background: rgba(255, 193, 121, 0.12);
+    border: 1px solid rgba(255, 193, 121, 0.30);
+    font-size: 12px;
+    letter-spacing: 0.24em;
+    color: #ffc27b;
+    font-weight: 950;
+    margin-bottom: 14px;
 }
 
 .hero-title {
-    font-size: 48px;
-    font-weight: 950;
-    color: #fff3e6;
-    line-height: 1.15;
-    text-shadow: 0 6px 25px rgba(0,0,0,0.35);
+    position: relative;
+    z-index: 2;
+    font-size: clamp(34px, 4.4vw, 58px);
+    font-weight: 1000;
+    color: #fff2df;
+    line-height: 1.08;
+    text-shadow: 0 8px 30px rgba(0,0,0,0.45);
 }
 
 .hero-subtitle {
+    position: relative;
+    z-index: 2;
+    max-width: 850px;
     font-size: 16px;
-    color: #f3d8bd;
-    margin-top: 10px;
+    color: #f5d9ba;
+    margin-top: 12px;
+    line-height: 1.8;
 }
 
+/* =========================================================
+   Cards
+========================================================= */
 .lab-card {
-    background: rgba(255,255,255,0.085);
-    border: 1px solid rgba(255,255,255,0.14);
-    border-radius: 22px;
-    padding: 18px 20px;
-    box-shadow: 0 14px 38px rgba(0,0,0,0.24);
-    margin-bottom: 16px;
+    background:
+        linear-gradient(135deg, rgba(255,255,255,0.105), rgba(255,255,255,0.045));
+    border: 1px solid rgba(255, 226, 188, 0.17);
+    border-radius: 24px;
+    padding: 20px 22px;
+    box-shadow:
+        0 16px 42px rgba(0,0,0,0.30),
+        inset 0 1px 0 rgba(255,255,255,0.10);
+    margin-bottom: 18px;
+    backdrop-filter: blur(12px);
 }
 
 .lab-card-title {
-    color: #ffd9ad;
-    font-weight: 900;
+    color: #ffd89f;
+    font-weight: 950;
     font-size: 17px;
-    margin-bottom: 8px;
+    margin-bottom: 9px;
+    letter-spacing: 0.02em;
 }
 
 .lab-card-body {
-    color: #f4dfc9;
+    color: #f6ddc1;
     font-size: 14px;
+    line-height: 1.85;
 }
 
+/* ===== 条件表示ボックス ===== */
+.condition-box {
+    background:
+        linear-gradient(135deg, rgba(255,255,255,0.11), rgba(255,255,255,0.045));
+    border: 1px solid rgba(255, 226, 188, 0.18);
+    border-radius: 24px;
+    padding: 20px 22px;
+    box-shadow:
+        0 16px 42px rgba(0,0,0,0.30),
+        inset 0 1px 0 rgba(255,255,255,0.10);
+    margin-bottom: 16px;
+    backdrop-filter: blur(12px);
+}
+
+.condition-title {
+    font-size: 16px;
+    font-weight: 950;
+    color: #ffd89f;
+    margin-bottom: 12px;
+    letter-spacing: 0.02em;
+}
+
+.condition-text {
+    color: #f7dfc5;
+    font-size: 14px;
+    line-height: 1.95;
+}
+
+/* ===== 削除エリア ===== */
+.danger-card {
+    background:
+        linear-gradient(135deg, rgba(150, 32, 22, 0.38), rgba(76, 18, 13, 0.24));
+    border: 1px solid rgba(255, 125, 95, 0.42);
+    border-radius: 24px;
+    padding: 20px 22px;
+    box-shadow: 0 16px 42px rgba(0,0,0,0.28);
+    margin-top: 22px;
+}
+
+/* =========================================================
+   Tabs
+========================================================= */
 .stTabs [data-baseweb="tab-list"] {
     gap: 12px;
-    background: rgba(255,255,255,0.07);
+    background:
+        linear-gradient(135deg, rgba(255,255,255,0.09), rgba(255,255,255,0.04));
     padding: 10px;
-    border-radius: 20px;
-    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 22px;
+    border: 1px solid rgba(255, 226, 188, 0.14);
+    box-shadow: 0 12px 34px rgba(0,0,0,0.22);
 }
 
 .stTabs [data-baseweb="tab"] {
-    height: 50px;
+    height: 52px;
     padding: 0 24px;
-    border-radius: 15px;
-    color: #f2d6b8;
+    border-radius: 16px;
+    color: #f0cdaa;
     background: rgba(255,255,255,0.055);
-    font-weight: 850;
+    font-weight: 900;
+    letter-spacing: 0.01em;
+    transition: all 0.15s ease-in-out;
+}
+
+.stTabs [data-baseweb="tab"]:hover {
+    background: rgba(255, 193, 121, 0.13);
+    color: #ffe5c8;
 }
 
 .stTabs [aria-selected="true"] {
-    background: linear-gradient(135deg, #c47a3a, #ffc078) !important;
-    color: #1c1009 !important;
-    box-shadow: 0 8px 25px rgba(255, 192, 120, 0.22);
+    background: linear-gradient(135deg, #d18440, #ffc57e) !important;
+    color: #1b0e06 !important;
+    box-shadow:
+        0 10px 28px rgba(255, 181, 97, 0.30),
+        inset 0 1px 0 rgba(255,255,255,0.35);
+}
+
+/* =========================================================
+   Inputs
+========================================================= */
+label {
+    color: #ffe7c9 !important;
+    font-weight: 850 !important;
+    letter-spacing: 0.01em;
 }
 
 .stTextInput input,
 .stNumberInput input,
 .stTextArea textarea {
-    background-color: rgba(255,255,255,0.96) !important;
-    color: #24140c !important;
-    border-radius: 13px !important;
-    border: 1px solid rgba(255, 209, 160, 0.62) !important;
-    box-shadow: 0 6px 18px rgba(0,0,0,0.10);
+    background: rgba(255, 250, 242, 0.98) !important;
+    color: #241205 !important;
+    border-radius: 15px !important;
+    border: 1px solid rgba(255, 210, 160, 0.78) !important;
+    box-shadow:
+        0 8px 20px rgba(0,0,0,0.15),
+        inset 0 1px 0 rgba(255,255,255,0.85);
 }
 
 .stTextInput input:focus,
 .stNumberInput input:focus,
 .stTextArea textarea:focus {
-    border: 1px solid #ffc078 !important;
-    box-shadow: 0 0 0 2px rgba(255, 192, 120, 0.18);
+    border: 1px solid #ffbd74 !important;
+    box-shadow:
+        0 0 0 3px rgba(255, 189, 116, 0.24),
+        0 8px 20px rgba(0,0,0,0.15);
 }
 
+.stTextArea textarea {
+    min-height: 96px;
+}
+
+/* ===== Selectbox ===== */
 .stSelectbox div[data-baseweb="select"] > div {
-    background-color: rgba(255,255,255,0.96) !important;
-    color: #24140c !important;
-    border-radius: 13px !important;
-    border: 1px solid rgba(255, 209, 160, 0.62) !important;
+    background: rgba(255, 250, 242, 0.98) !important;
+    color: #241205 !important;
+    border-radius: 15px !important;
+    border: 1px solid rgba(255, 210, 160, 0.78) !important;
+    box-shadow:
+        0 8px 20px rgba(0,0,0,0.15),
+        inset 0 1px 0 rgba(255,255,255,0.85);
 }
 
-label {
-    color: #ffe7cc !important;
-    font-weight: 750 !important;
-}
-
-.stButton > button {
+/* =========================================================
+   Buttons
+========================================================= */
+.stButton > button,
+.stFormSubmitButton > button {
     width: 100%;
-    border: 2px solid rgba(255, 220, 170, 0.95) !important;
-    border-radius: 16px !important;
-    padding: 0.88rem 1.2rem !important;
-    background: linear-gradient(135deg, #f4a259, #ffd08a) !important;
-    color: #2a1406 !important;
-    font-weight: 950 !important;
+    border: 2px solid rgba(255, 229, 190, 0.98) !important;
+    border-radius: 18px !important;
+    padding: 0.92rem 1.25rem !important;
+    background:
+        linear-gradient(135deg, #ffad5f 0%, #ffd18b 55%, #ffbd70 100%) !important;
+    color: #241005 !important;
+    font-weight: 1000 !important;
     font-size: 16px !important;
+    letter-spacing: 0.02em;
     opacity: 1 !important;
-    box-shadow: 0 10px 28px rgba(216, 137, 67, 0.35) !important;
+    box-shadow:
+        0 12px 32px rgba(255, 172, 95, 0.34),
+        inset 0 1px 0 rgba(255,255,255,0.45);
     transition: all 0.15s ease-in-out;
 }
 
-.stButton > button p {
-    color: #2a1406 !important;
-    font-weight: 950 !important;
+.stButton > button p,
+.stFormSubmitButton > button p {
+    color: #241005 !important;
+    font-weight: 1000 !important;
     opacity: 1 !important;
 }
 
-.stButton > button:hover {
+.stButton > button:hover,
+.stFormSubmitButton > button:hover {
     transform: translateY(-2px);
-    background: linear-gradient(135deg, #ffb36b, #ffe0a8) !important;
-    box-shadow: 0 14px 34px rgba(255, 192, 120, 0.48) !important;
-    color: #2a1406 !important;
-    border-color: #fff1d5 !important;
+    background:
+        linear-gradient(135deg, #ffc07b 0%, #ffe0ad 55%, #ffc885 100%) !important;
+    box-shadow:
+        0 16px 42px rgba(255, 192, 120, 0.48),
+        inset 0 1px 0 rgba(255,255,255,0.55);
+    border-color: #fff2d8 !important;
+    color: #241005 !important;
 }
 
+.stButton > button:active,
+.stFormSubmitButton > button:active {
+    transform: translateY(0);
+}
+
+/* disabledも薄くしない */
 .stButton > button:disabled,
-.stButton > button[disabled] {
-    background: linear-gradient(135deg, #b88455, #d7b17d) !important;
-    color: #3a1f0d !important;
-    border: 2px solid rgba(255, 225, 180, 0.75) !important;
-    opacity: 0.95 !important;
+.stButton > button[disabled],
+.stFormSubmitButton > button:disabled,
+.stFormSubmitButton > button[disabled] {
+    background: linear-gradient(135deg, #b9885b, #d8b889) !important;
+    color: #321a0b !important;
+    border: 2px solid rgba(255, 225, 180, 0.80) !important;
+    opacity: 0.98 !important;
     box-shadow: none !important;
 }
 
 .stButton > button:disabled p,
-.stButton > button[disabled] p {
-    color: #3a1f0d !important;
-    font-weight: 950 !important;
+.stButton > button[disabled] p,
+.stFormSubmitButton > button:disabled p,
+.stFormSubmitButton > button[disabled] p {
+    color: #321a0b !important;
+    font-weight: 1000 !important;
     opacity: 1 !important;
 }
 
-.stAlert {
-    border-radius: 18px;
-    border: 1px solid rgba(255,255,255,0.14);
-    box-shadow: 0 10px 28px rgba(0,0,0,0.18);
-}
-
+/* =========================================================
+   Metrics
+========================================================= */
 [data-testid="stMetric"] {
-    background: rgba(255,255,255,0.095);
-    border: 1px solid rgba(255,255,255,0.15);
-    padding: 18px;
-    border-radius: 20px;
-    box-shadow: 0 14px 38px rgba(0,0,0,0.25);
-}
-
-[data-testid="stMetricValue"] {
-    color: #fff3e6 !important;
-    font-weight: 950;
+    background:
+        linear-gradient(135deg, rgba(255,255,255,0.12), rgba(255,255,255,0.045));
+    border: 1px solid rgba(255, 226, 188, 0.16);
+    padding: 20px;
+    border-radius: 24px;
+    box-shadow:
+        0 16px 42px rgba(0,0,0,0.30),
+        inset 0 1px 0 rgba(255,255,255,0.10);
+    backdrop-filter: blur(12px);
 }
 
 [data-testid="stMetricLabel"] {
-    color: #ffd9ad !important;
+    color: #ffd89f !important;
+    font-weight: 900;
 }
 
-[data-testid="stDataFrame"] {
+[data-testid="stMetricValue"] {
+    color: #fff6ea !important;
+    font-weight: 1000;
+    text-shadow: 0 3px 14px rgba(0,0,0,0.30);
+}
+
+/* =========================================================
+   Alerts
+========================================================= */
+.stAlert {
     border-radius: 20px;
+    border: 1px solid rgba(255,255,255,0.16);
+    box-shadow: 0 12px 34px rgba(0,0,0,0.22);
+}
+
+/* =========================================================
+   DataFrames / Charts
+========================================================= */
+[data-testid="stDataFrame"] {
+    border-radius: 22px;
     overflow: hidden;
-    box-shadow: 0 16px 42px rgba(0,0,0,0.30);
-    border: 1px solid rgba(255,255,255,0.10);
+    box-shadow:
+        0 18px 48px rgba(0,0,0,0.34),
+        inset 0 1px 0 rgba(255,255,255,0.08);
+    border: 1px solid rgba(255, 226, 188, 0.14);
 }
 
+[data-testid="stTable"] {
+    border-radius: 22px;
+    overflow: hidden;
+}
+
+/* グラフ周りをカードっぽく */
+[data-testid="stVegaLiteChart"],
+[data-testid="stArrowVegaLiteChart"],
+[data-testid="stDeckGlJsonChart"] {
+    background:
+        linear-gradient(135deg, rgba(255,255,255,0.09), rgba(255,255,255,0.035));
+    border: 1px solid rgba(255, 226, 188, 0.13);
+    border-radius: 22px;
+    padding: 12px;
+    box-shadow: 0 16px 42px rgba(0,0,0,0.25);
+}
+
+/* =========================================================
+   Sliders
+========================================================= */
 .stSlider {
-    background: rgba(255,255,255,0.065);
-    padding: 12px 15px;
-    border-radius: 16px;
-    margin-bottom: 10px;
-    border: 1px solid rgba(255,255,255,0.08);
+    background:
+        linear-gradient(135deg, rgba(255,255,255,0.085), rgba(255,255,255,0.04));
+    padding: 13px 16px;
+    border-radius: 18px;
+    margin-bottom: 12px;
+    border: 1px solid rgba(255, 226, 188, 0.10);
+    box-shadow: 0 8px 22px rgba(0,0,0,0.18);
 }
 
+/* =========================================================
+   Caption / Divider
+========================================================= */
 [data-testid="stCaptionContainer"] {
-    color: #f1c79a !important;
+    color: #f4c88e !important;
+    font-weight: 650;
 }
 
 hr {
-    border-color: rgba(255,255,255,0.14);
+    border-color: rgba(255, 226, 188, 0.16);
+    margin-top: 1.6rem;
+    margin-bottom: 1.6rem;
 }
 
-.condition-box {
-    background: rgba(255,255,255,0.08);
-    border: 1px solid rgba(255,255,255,0.13);
-    border-radius: 20px;
-    padding: 18px 20px;
-    box-shadow: 0 12px 32px rgba(0,0,0,0.20);
-    margin-bottom: 14px;
+/* =========================================================
+   Checkbox
+========================================================= */
+.stCheckbox {
+    background: rgba(255,255,255,0.065);
+    padding: 10px 14px;
+    border-radius: 16px;
+    border: 1px solid rgba(255, 226, 188, 0.11);
 }
 
-.condition-title {
-    font-size: 16px;
-    font-weight: 900;
-    color: #ffd9ad;
-    margin-bottom: 10px;
+/* =========================================================
+   Scrollbar
+========================================================= */
+::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
 }
 
-.condition-text {
-    color: #f5dec7;
-    font-size: 14px;
-    line-height: 1.8;
+::-webkit-scrollbar-track {
+    background: #120905;
 }
 
-.danger-card {
-    background: rgba(120, 30, 20, 0.28);
-    border: 1px solid rgba(255, 120, 90, 0.34);
-    border-radius: 20px;
-    padding: 18px 20px;
-    box-shadow: 0 12px 32px rgba(0,0,0,0.20);
-    margin-top: 20px;
+::-webkit-scrollbar-thumb {
+    background: linear-gradient(135deg, #9b5a2e, #e1a15c);
+    border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(135deg, #b96b36, #ffc078);
+}
+
+/* =========================================================
+   Mobile Responsive
+========================================================= */
+@media (max-width: 768px) {
+    .block-container {
+        padding-top: 1rem;
+        padding-left: 1rem;
+        padding-right: 1rem;
+    }
+
+    .hero-card {
+        padding: 24px 22px;
+        border-radius: 26px;
+    }
+
+    .hero-title {
+        font-size: 34px;
+    }
+
+    .hero-subtitle {
+        font-size: 14px;
+    }
+
+    .stTabs [data-baseweb="tab"] {
+        padding: 0 14px;
+        font-size: 13px;
+    }
 }
 </style>
 """, unsafe_allow_html=True)
