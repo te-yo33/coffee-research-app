@@ -523,7 +523,7 @@ with col_d:
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-tab1, tab2, tab3, tab4 = st.tabs(["① 条件登録", "② 結果入力", "③ データ確認", "④ 編集・削除"])
+tab1, tab2, tab3, tab4 = st.tabs(["① 条件登録", "② 結果入力", "③ データ確認・分析", "④ 編集・削除"])
 
 
 # =========================
@@ -808,39 +808,55 @@ with tab2:
 
 
 # =========================
-# ③ データ確認
+# ③ データ確認・分析
 # =========================
 with tab3:
-    st.header("③ 過去データ確認")
+    st.header("③ 過去データ確認・分析")
 
     df = load_data()
 
     st.subheader("実験ログ一覧")
     st.dataframe(df, width="stretch")
 
-    if not df.empty:
+    if df.empty:
+        st.info("まだ実験データがありません。")
+    else:
         graph_df = df.copy()
 
-        graph_df["TDS%"] = pd.to_numeric(graph_df["TDS%"], errors="coerce")
-        graph_df["抽出収率%"] = pd.to_numeric(graph_df["抽出収率%"], errors="coerce")
-        graph_df["実験No"] = pd.to_numeric(graph_df["実験No"], errors="coerce")
-        graph_df["焙煎度"] = pd.to_numeric(graph_df["焙煎度"], errors="coerce")
+        numeric_cols = [
+            "実験No", "焙煎度", "豆量g", "湯量g", "湯温℃",
+            "抽出液量g", "抽出時間秒", "TDS%", "抽出収率%",
+            "酸味", "甘味", "苦味", "雑味", "香り", "飲みやすさ",
+            "焙煎後日数", "開封後日数"
+        ]
+
+        for col in numeric_cols:
+            if col in graph_df.columns:
+                graph_df[col] = pd.to_numeric(graph_df[col], errors="coerce")
 
         graph_df = graph_df.dropna(subset=["実験No"])
+        valid_df = graph_df.dropna(subset=["TDS%", "抽出収率%"]).copy()
 
         st.subheader("TDSの推移")
-        st.line_chart(graph_df.set_index("実験No")["TDS%"])
+
+        if valid_df.empty:
+            st.info("まだTDSが入力された実験がありません。")
+        else:
+            st.line_chart(valid_df.set_index("実験No")["TDS%"])
 
         st.subheader("抽出収率の推移")
-        st.line_chart(graph_df.set_index("実験No")["抽出収率%"])
+
+        if valid_df.empty:
+            st.info("まだ抽出収率が入力された実験がありません。")
+        else:
+            st.line_chart(valid_df.set_index("実験No")["抽出収率%"])
 
         st.subheader("目標TDS 1.25%に近い順")
 
-        ranking_df = graph_df.dropna(subset=["TDS%"]).copy()
-
-        if ranking_df.empty:
+        if valid_df.empty:
             st.info("まだTDSが入力された実験がありません。")
         else:
+            ranking_df = valid_df.copy()
             ranking_df["目標との差"] = (ranking_df["TDS%"] - 1.25).abs()
             ranking_df = ranking_df.sort_values("目標との差")
 
@@ -852,24 +868,182 @@ with tab3:
 
             st.dataframe(ranking_df[ranking_cols], width="stretch")
 
-        st.subheader("研究メモ")
-
-        valid_df = graph_df.dropna(subset=["TDS%", "抽出収率%"])
-
-        if valid_df.empty:
-            st.info("結果が入力されると、ここに簡単な分析メモが表示されます。")
-        else:
-            best_row = valid_df.iloc[(valid_df["TDS%"] - 1.25).abs().argsort()[:1]].iloc[0]
+            best_row = ranking_df.iloc[0]
 
             st.markdown(f"""
             <div class="lab-card">
-                <div class="lab-card-title">現在もっとも目標TDSに近い実験</div>
+                <div class="lab-card-title">1.25%に最も近いおすすめ条件</div>
                 <div class="lab-card-body">
-                    実験No.{int(best_row["実験No"])} が、TDS 1.25%にもっとも近い条件です。<br>
-                    TDS：{best_row["TDS%"]:.2f}% ／ 抽出収率：{best_row["抽出収率%"]:.2f}%<br>
+                    現時点では、実験No.{int(best_row["実験No"])} が目標TDS 1.25%に最も近いです。<br>
+                    TDS：{best_row["TDS%"]:.2f}% ／ 抽出収率：{best_row["抽出収率%"]:.2f}% ／ 目標との差：{best_row["目標との差"]:.3f}<br>
                     豆：{esc(best_row["豆の種類"])} ／ 焙煎度：{esc(best_row["焙煎度"])} ／ 挽き目：{esc(best_row["挽き目"])}<br>
-                    ドリッパー：{esc(best_row["ドリッパー"])} ／ フィルター：{esc(best_row["フィルター"])}<br>
-                    煎れ方：{esc(best_row["煎れ方"])} ／ 蒸らし：{esc(best_row["蒸らし有無"])}
+                    ドリッパー：{esc(best_row["ドリッパー"])} ／ フィルター：{esc(best_row["フィルター"])} ／ 煎れ方：{esc(best_row["煎れ方"])}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        st.subheader("豆ごとの分析")
+
+        if valid_df.empty:
+            st.info("まだ分析できるデータがありません。")
+        else:
+            bean_analysis = (
+                valid_df
+                .groupby("豆の種類")
+                .agg(**{
+                    "実験数": ("実験No", "count"),
+                    "平均TDS": ("TDS%", "mean"),
+                    "平均抽出収率": ("抽出収率%", "mean"),
+                    "平均酸味": ("酸味", "mean"),
+                    "平均甘味": ("甘味", "mean"),
+                    "平均雑味": ("雑味", "mean"),
+                    "平均香り": ("香り", "mean"),
+                    "平均飲みやすさ": ("飲みやすさ", "mean"),
+                })
+                .reset_index()
+            )
+
+            st.dataframe(bean_analysis.round(2), width="stretch")
+
+        st.subheader("焙煎後日数ごとの味変化")
+
+        flavor_cols = ["酸味", "甘味", "苦味", "雑味", "香り", "飲みやすさ"]
+        flavor_df = graph_df.dropna(subset=["焙煎後日数"]).copy()
+
+        for col in flavor_cols:
+            flavor_df[col] = pd.to_numeric(flavor_df[col], errors="coerce")
+
+        flavor_df = flavor_df.dropna(subset=flavor_cols, how="all")
+
+        if flavor_df.empty:
+            st.info("焙煎後日数と味評価が入ると、ここに味変化グラフが表示されます。")
+        else:
+            flavor_by_days = (
+                flavor_df
+                .groupby("焙煎後日数")[flavor_cols]
+                .mean()
+                .sort_index()
+            )
+
+            st.line_chart(flavor_by_days)
+            st.caption("焙煎後日数ごとに、酸味・甘味・雑味・香りなどの平均変化を確認できます。")
+
+        st.subheader("挽き目ごとの平均TDS")
+
+        grind_df = valid_df.copy()
+
+        if grind_df.empty:
+            st.info("まだ挽き目ごとの分析に使えるデータがありません。")
+        else:
+            grind_analysis = (
+                grind_df
+                .groupby("挽き目")
+                .agg(**{
+                    "実験数": ("実験No", "count"),
+                    "平均TDS": ("TDS%", "mean"),
+                    "平均抽出収率": ("抽出収率%", "mean"),
+                    "平均雑味": ("雑味", "mean"),
+                    "平均飲みやすさ": ("飲みやすさ", "mean"),
+                })
+                .reset_index()
+            )
+
+            grind_analysis["挽き目_num"] = pd.to_numeric(grind_analysis["挽き目"], errors="coerce")
+            grind_analysis = grind_analysis.sort_values("挽き目_num", na_position="last")
+            grind_analysis = grind_analysis.drop(columns=["挽き目_num"])
+
+            st.dataframe(grind_analysis.round(2), width="stretch")
+
+            chart_grind = grind_analysis.copy()
+            chart_grind["平均TDS"] = pd.to_numeric(chart_grind["平均TDS"], errors="coerce")
+
+            if not chart_grind["平均TDS"].dropna().empty:
+                st.bar_chart(chart_grind.set_index("挽き目")["平均TDS"])
+
+        st.subheader("雑味が強く出た条件の検出")
+
+        off_df = graph_df.copy()
+        off_df["雑味"] = pd.to_numeric(off_df["雑味"], errors="coerce")
+
+        strong_off_df = off_df[off_df["雑味"] >= 4].copy()
+
+        if strong_off_df.empty:
+            st.success("現時点では、雑味4以上の強い雑味データはありません。")
+        else:
+            st.warning("雑味が強く出た実験があります。条件を確認してください。")
+
+            off_cols = [
+                "実験No", "豆の種類", "焙煎度", "焙煎後日数",
+                "挽き目", "ドリッパー", "フィルター", "煎れ方",
+                "TDS%", "抽出収率%", "雑味", "コメント"
+            ]
+
+            st.dataframe(strong_off_df[off_cols], width="stretch")
+
+            st.markdown("""
+            <div class="lab-card">
+                <div class="lab-card-title">雑味が強いときの見方</div>
+                <div class="lab-card-body">
+                    雑味が強い原因としては、抽出しすぎ、挽き目が細かすぎる、抽出時間が長すぎる、
+                    焙煎直後でガスが多い、注湯で攪拌が強すぎる、などが考えられます。
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        st.subheader("今日の結果から次回条件を提案")
+
+        if valid_df.empty:
+            st.info("TDSと抽出収率が入力されると、次回条件の提案が表示されます。")
+        else:
+            latest_row = valid_df.sort_values("実験No").iloc[-1]
+
+            latest_tds = safe_float(latest_row["TDS%"])
+            latest_yield = safe_float(latest_row["抽出収率%"])
+            latest_off = safe_float(latest_row["雑味"])
+            latest_aroma = safe_float(latest_row["香り"])
+            latest_sweet = safe_float(latest_row["甘味"])
+            latest_roast_days = safe_float(latest_row["焙煎後日数"])
+            latest_grind = latest_row["挽き目"]
+
+            suggestions = []
+
+            if latest_tds < 1.20:
+                suggestions.append("TDSが低めなので、次回は挽き目を少し細かくする、または抽出時間を少し伸ばす候補があります。")
+            elif latest_tds > 1.30:
+                suggestions.append("TDSが高めなので、次回は挽き目を少し粗くする、または抽出時間を少し短くする候補があります。")
+            else:
+                suggestions.append("TDSは1.25%前後で良い範囲です。次回は同条件でもう一度試して再現性を確認する価値があります。")
+
+            if latest_yield < 18:
+                suggestions.append("抽出収率が18%未満なので、抽出不足気味です。浅煎りなら少し細かくする、蒸らしを丁寧にする、注湯をゆっくりにする候補があります。")
+            elif latest_yield > 22:
+                suggestions.append("抽出収率が22%を超えているので、過抽出気味です。雑味や渋みがあるなら、挽き目を粗くするか抽出時間を短くする候補があります。")
+            else:
+                suggestions.append("抽出収率は18〜22%の適正範囲です。大きく変えず、味評価に合わせて微調整するのが良さそうです。")
+
+            if latest_off >= 4:
+                if latest_roast_days <= 2:
+                    suggestions.append("雑味が強く、焙煎後日数も浅いので、同条件で焙煎後3〜5日目に再実験すると豆の落ち着きが確認できます。")
+                elif latest_yield >= 21:
+                    suggestions.append("雑味が強く、抽出収率も高めなので、次回は挽き目を少し粗くするか、注湯の攪拌を弱める候補があります。")
+                else:
+                    suggestions.append("雑味が強いですが抽出収率だけでは過抽出とは言い切れません。フィルター、注湯の勢い、蒸らし条件も確認すると良さそうです。")
+
+            if latest_aroma <= 2:
+                suggestions.append("香り評価が低めです。焙煎後日数を変えて比較するか、蒸らしを丁寧にして香りの立ち上がりを見ると良さそうです。")
+
+            if latest_sweet <= 2 and 1.20 <= latest_tds <= 1.30:
+                suggestions.append("TDSは良いのに甘味が弱いので、抽出収率・焙煎後日数・注湯メモを見ながら、同じ濃度で味の質を上げる方向が良さそうです。")
+
+            suggestion_html = "<br>".join([f"・{esc(s)}" for s in suggestions])
+
+            st.markdown(f"""
+            <div class="lab-card">
+                <div class="lab-card-title">最新実験 No.{int(latest_row["実験No"])} からの次回提案</div>
+                <div class="lab-card-body">
+                    最新条件：豆 {esc(latest_row["豆の種類"])} ／ 焙煎度 {esc(latest_row["焙煎度"])} ／ 挽き目 {esc(latest_grind)} ／ 煎れ方 {esc(latest_row["煎れ方"])}<br>
+                    TDS：{latest_tds:.2f}% ／ 抽出収率：{latest_yield:.2f}% ／ 雑味：{latest_off:.0f} ／ 香り：{latest_aroma:.0f}<br><br>
+                    {suggestion_html}
                 </div>
             </div>
             """, unsafe_allow_html=True)
