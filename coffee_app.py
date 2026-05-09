@@ -210,8 +210,6 @@ def stylish_line_chart(df, x_col, y_col, title, target_value=None, suffix=""):
         fontSize=20,
         anchor="start",
         fontWeight="bold"
-    ).configure_background(
-        "transparent"
     )
 
 
