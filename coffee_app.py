@@ -1,11 +1,15 @@
 import streamlit as st
 import pandas as pd
-import os
 import html
 from datetime import datetime
 
-FILENAME = "coffee_log.csv"
+import gspread
+from google.oauth2.service_account import Credentials
 
+
+# =========================
+# 基本設定
+# =========================
 HEADERS = [
     "実験No", "日付",
     "豆の種類", "焙煎度", "豆量g", "湯量g", "湯温℃",
@@ -27,63 +31,22 @@ ROAST_NAMES = {
     8: "かなり深煎り"
 }
 
+SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive"
+]
 
+
+# =========================
+# 共通関数
+# =========================
 def esc(value):
     return html.escape(str(value))
 
 
-def create_file_if_not_exists():
-    if not os.path.exists(FILENAME):
-        df = pd.DataFrame(columns=HEADERS)
-        df.to_csv(FILENAME, index=False, encoding="utf-8-sig")
-
-
-def load_data():
-    create_file_if_not_exists()
-
-    df = pd.read_csv(
-        FILENAME,
-        encoding="utf-8-sig",
-        dtype=str,
-        keep_default_na=False
-    )
-
-    for col in HEADERS:
-        if col not in df.columns:
-            df[col] = ""
-
-    df = df[HEADERS]
-    df = df.astype("object")
-
-    return df
-
-
-def save_data(df):
-    df = df.copy()
-
-    for col in HEADERS:
-        if col not in df.columns:
-            df[col] = ""
-
-    df = df[HEADERS]
-    df.to_csv(FILENAME, index=False, encoding="utf-8-sig")
-
-
-def next_experiment_no(df):
-    if df.empty:
-        return 1
-
-    exp_no = pd.to_numeric(df["実験No"], errors="coerce")
-
-    if exp_no.dropna().empty:
-        return 1
-
-    return int(exp_no.max()) + 1
-
-
 def safe_float(value, default=0.0):
     try:
-        if value == "":
+        if value == "" or value is None:
             return default
         return float(value)
     except Exception:
@@ -92,7 +55,7 @@ def safe_float(value, default=0.0):
 
 def safe_int(value, default=0):
     try:
-        if value == "":
+        if value == "" or value is None:
             return default
         return int(float(value))
     except Exception:
@@ -142,6 +105,94 @@ def rating_index(value):
     return 0
 
 
+def next_experiment_no(df):
+    if df.empty:
+        return 1
+
+    exp_no = pd.to_numeric(df["実験No"], errors="coerce")
+
+    if exp_no.dropna().empty:
+        return 1
+
+    return int(exp_no.max()) + 1
+
+
+# =========================
+# Google Sheets 接続
+# =========================
+@st.cache_resource
+def get_worksheet():
+    try:
+        creds_dict = dict(st.secrets["gcp_service_account"])
+        spreadsheet_id = st.secrets["SPREADSHEET_ID"]
+
+        creds = Credentials.from_service_account_info(
+            creds_dict,
+            scopes=SCOPES
+        )
+
+        client = gspread.authorize(creds)
+        spreadsheet = client.open_by_key(spreadsheet_id)
+        worksheet = spreadsheet.sheet1
+
+        return worksheet
+
+    except Exception as e:
+        st.error("Googleスプレッドシートへの接続に失敗しました。")
+        st.write("Secretsの設定、スプレッドシートID、サービスアカウント共有を確認してください。")
+        st.exception(e)
+        st.stop()
+
+
+def load_data():
+    worksheet = get_worksheet()
+
+    values = worksheet.get_all_values()
+
+    if not values:
+        worksheet.update(values=[HEADERS], range_name="A1")
+        return pd.DataFrame(columns=HEADERS).astype("object")
+
+    sheet_headers = values[0]
+    rows = values[1:]
+
+    if len(sheet_headers) == 0:
+        worksheet.update(values=[HEADERS], range_name="A1")
+        return pd.DataFrame(columns=HEADERS).astype("object")
+
+    df = pd.DataFrame(rows, columns=sheet_headers)
+
+    for col in HEADERS:
+        if col not in df.columns:
+            df[col] = ""
+
+    df = df[HEADERS]
+    df = df.fillna("").astype("object")
+
+    return df
+
+
+def save_data(df):
+    worksheet = get_worksheet()
+
+    df = df.copy()
+
+    for col in HEADERS:
+        if col not in df.columns:
+            df[col] = ""
+
+    df = df[HEADERS]
+    df = df.fillna("").astype(str)
+
+    rows = [HEADERS] + df.values.tolist()
+
+    worksheet.clear()
+    worksheet.update(values=rows, range_name="A1")
+
+
+# =========================
+# ページ設定
+# =========================
 st.set_page_config(
     page_title="浅煎りコーヒー研究ログ",
     page_icon="☕",
@@ -149,6 +200,9 @@ st.set_page_config(
 )
 
 
+# =========================
+# デザインCSS
+# =========================
 st.markdown("""
 <style>
 .stApp {
@@ -285,7 +339,6 @@ label {
     font-weight: 750 !important;
 }
 
-/* ===== ボタンを見やすく修正 ===== */
 .stButton > button {
     width: 100%;
     border: 2px solid rgba(255, 220, 170, 0.95) !important;
@@ -314,13 +367,6 @@ label {
     border-color: #fff1d5 !important;
 }
 
-.stButton > button:active {
-    transform: translateY(0px);
-    background: linear-gradient(135deg, #d88943, #ffc078) !important;
-    color: #2a1406 !important;
-}
-
-/* disabled状態のボタンも薄すぎないようにする */
 .stButton > button:disabled,
 .stButton > button[disabled] {
     background: linear-gradient(135deg, #b88455, #d7b17d) !important;
@@ -417,13 +463,16 @@ hr {
 """, unsafe_allow_html=True)
 
 
+# =========================
+# ヘッダー
+# =========================
 st.markdown("""
 <div class="hero-card">
     <div class="hero-label">LIGHT ROAST COFFEE LAB</div>
     <div class="hero-title">☕ 浅煎りコーヒー研究ログ</div>
     <div class="hero-subtitle">
         TDS 1.25%前後を安定して出すための実験記録アプリ。
-        条件登録、結果入力、データ分析まで一括管理。
+        条件登録、結果入力、データ分析までGoogleスプレッドシートに同期。
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -432,6 +481,9 @@ st.markdown("""
 df = load_data()
 
 
+# =========================
+# 上部サマリー
+# =========================
 summary_df = df.copy()
 
 if not summary_df.empty:
@@ -442,40 +494,31 @@ if not summary_df.empty:
     measured_count = summary_df["TDS%"].notna().sum()
     avg_tds = summary_df["TDS%"].mean()
     avg_yield = summary_df["抽出収率%"].mean()
-
-    col_a, col_b, col_c, col_d = st.columns(4)
-
-    with col_a:
-        st.metric("実験数", total_count)
-
-    with col_b:
-        st.metric("結果入力済み", measured_count)
-
-    with col_c:
-        if pd.isna(avg_tds):
-            st.metric("平均TDS", "-")
-        else:
-            st.metric("平均TDS", f"{avg_tds:.2f}%")
-
-    with col_d:
-        if pd.isna(avg_yield):
-            st.metric("平均抽出収率", "-")
-        else:
-            st.metric("平均抽出収率", f"{avg_yield:.2f}%")
 else:
-    col_a, col_b, col_c, col_d = st.columns(4)
+    total_count = 0
+    measured_count = 0
+    avg_tds = None
+    avg_yield = None
 
-    with col_a:
-        st.metric("実験数", 0)
+col_a, col_b, col_c, col_d = st.columns(4)
 
-    with col_b:
-        st.metric("結果入力済み", 0)
+with col_a:
+    st.metric("実験数", total_count)
 
-    with col_c:
+with col_b:
+    st.metric("結果入力済み", measured_count)
+
+with col_c:
+    if avg_tds is None or pd.isna(avg_tds):
         st.metric("平均TDS", "-")
+    else:
+        st.metric("平均TDS", f"{avg_tds:.2f}%")
 
-    with col_d:
+with col_d:
+    if avg_yield is None or pd.isna(avg_yield):
         st.metric("平均抽出収率", "-")
+    else:
+        st.metric("平均抽出収率", f"{avg_yield:.2f}%")
 
 
 st.markdown("<br>", unsafe_allow_html=True)
@@ -483,6 +526,9 @@ st.markdown("<br>", unsafe_allow_html=True)
 tab1, tab2, tab3, tab4 = st.tabs(["① 条件登録", "② 結果入力", "③ データ確認", "④ 編集・削除"])
 
 
+# =========================
+# ① 条件登録
+# =========================
 with tab1:
     st.header("① 抽出前の条件を登録")
 
@@ -540,9 +586,7 @@ with tab1:
         st.subheader("抽出条件")
 
         grind_size = st.text_input("挽き目", value="8.1")
-
         dripper = st.text_input("ドリッパー", value="V60")
-
         filter_type = st.text_input("フィルター", value="HARIO 白")
 
         pour_method_choice = st.selectbox(
@@ -635,9 +679,13 @@ with tab1:
         df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
         save_data(df)
 
-        st.success(f"実験No.{exp_no} の条件を保存しました。")
+        st.success(f"実験No.{exp_no} の条件をGoogleスプレッドシートに保存しました。")
+        st.rerun()
 
 
+# =========================
+# ② 結果入力
+# =========================
 with tab2:
     st.header("② 抽出後の結果を入力")
 
@@ -689,42 +737,38 @@ with tab2:
             beverage_weight = st.number_input(
                 "抽出液量g",
                 min_value=0.0,
-                value=150.0,
+                value=safe_float(target["抽出液量g"], 150.0),
                 step=0.1
             )
 
             brew_time = st.number_input(
                 "抽出時間秒",
                 min_value=0,
-                value=0,
+                value=safe_int(target["抽出時間秒"], 0),
                 step=1
             )
 
             tds = st.number_input(
                 "TDS%",
                 min_value=0.0,
-                value=1.25,
+                value=safe_float(target["TDS%"], 1.25),
                 step=0.01
             )
 
         with col2:
             st.subheader("味評価")
 
-            acidity = st.slider("酸味", 1, 5, 3)
-            sweetness = st.slider("甘味", 1, 5, 3)
-            bitterness = st.slider("苦味", 1, 5, 2)
-            off_flavor = st.slider("雑味", 1, 5, 3)
-            aroma = st.slider("香り", 1, 5, 3)
-            drinkability = st.slider("飲みやすさ", 1, 5, 3)
+            acidity = st.slider("酸味", 1, 5, safe_int(target["酸味"], 3))
+            sweetness = st.slider("甘味", 1, 5, safe_int(target["甘味"], 3))
+            bitterness = st.slider("苦味", 1, 5, safe_int(target["苦味"], 2))
+            off_flavor = st.slider("雑味", 1, 5, safe_int(target["雑味"], 3))
+            aroma = st.slider("香り", 1, 5, safe_int(target["香り"], 3))
+            drinkability = st.slider("飲みやすさ", 1, 5, safe_int(target["飲みやすさ"], 3))
 
-        comment = st.text_area("コメント")
+        comment = st.text_area("コメント", value=str(target["コメント"]))
 
         coffee_weight = safe_float(target["豆量g"])
-        extraction_yield = calc_yield(
-            tds,
-            beverage_weight,
-            coffee_weight
-        )
+        extraction_yield = calc_yield(tds, beverage_weight, coffee_weight)
 
         tds_label, tds_comment = judge_tds(tds)
         yield_label = judge_yield(extraction_yield)
@@ -758,17 +802,21 @@ with tab2:
 
             save_data(df)
 
-            st.success("結果を保存しました。")
+            st.success("結果をGoogleスプレッドシートに保存しました。")
             st.info(tds_comment)
+            st.rerun()
 
 
+# =========================
+# ③ データ確認
+# =========================
 with tab3:
     st.header("③ 過去データ確認")
 
     df = load_data()
 
     st.subheader("実験ログ一覧")
-    st.dataframe(df, use_container_width=True)
+    st.dataframe(df, width="stretch")
 
     if not df.empty:
         graph_df = df.copy()
@@ -802,10 +850,7 @@ with tab3:
                 "TDS%", "抽出収率%", "目標との差", "コメント"
             ]
 
-            st.dataframe(
-                ranking_df[ranking_cols],
-                use_container_width=True
-            )
+            st.dataframe(ranking_df[ranking_cols], width="stretch")
 
         st.subheader("研究メモ")
 
@@ -830,6 +875,9 @@ with tab3:
             """, unsafe_allow_html=True)
 
 
+# =========================
+# ④ 編集・削除
+# =========================
 with tab4:
     st.header("④ 過去データの編集・削除")
 
@@ -883,6 +931,7 @@ with tab4:
 
                 edit_date = st.text_input("日付", value=str(edit_target["日付"]))
                 edit_bean_type = st.text_input("豆の種類", value=str(edit_target["豆の種類"]))
+
                 edit_roast_level = st.selectbox(
                     "焙煎度（1〜8）",
                     [1, 2, 3, 4, 5, 6, 7, 8],
@@ -946,41 +995,12 @@ with tab4:
 
                 rating_options = ["", "1", "2", "3", "4", "5"]
 
-                edit_acidity = st.selectbox(
-                    "酸味",
-                    rating_options,
-                    index=rating_index(edit_target["酸味"])
-                )
-
-                edit_sweetness = st.selectbox(
-                    "甘味",
-                    rating_options,
-                    index=rating_index(edit_target["甘味"])
-                )
-
-                edit_bitterness = st.selectbox(
-                    "苦味",
-                    rating_options,
-                    index=rating_index(edit_target["苦味"])
-                )
-
-                edit_off_flavor = st.selectbox(
-                    "雑味",
-                    rating_options,
-                    index=rating_index(edit_target["雑味"])
-                )
-
-                edit_aroma = st.selectbox(
-                    "香り",
-                    rating_options,
-                    index=rating_index(edit_target["香り"])
-                )
-
-                edit_drinkability = st.selectbox(
-                    "飲みやすさ",
-                    rating_options,
-                    index=rating_index(edit_target["飲みやすさ"])
-                )
+                edit_acidity = st.selectbox("酸味", rating_options, index=rating_index(edit_target["酸味"]))
+                edit_sweetness = st.selectbox("甘味", rating_options, index=rating_index(edit_target["甘味"]))
+                edit_bitterness = st.selectbox("苦味", rating_options, index=rating_index(edit_target["苦味"]))
+                edit_off_flavor = st.selectbox("雑味", rating_options, index=rating_index(edit_target["雑味"]))
+                edit_aroma = st.selectbox("香り", rating_options, index=rating_index(edit_target["香り"]))
+                edit_drinkability = st.selectbox("飲みやすさ", rating_options, index=rating_index(edit_target["飲みやすさ"]))
 
             edit_comment = st.text_area("コメント", value=str(edit_target["コメント"]))
 
@@ -1028,8 +1048,8 @@ with tab4:
         <div class="danger-card">
             <div class="lab-card-title">削除エリア</div>
             <div class="lab-card-body">
-                削除すると、この実験データはCSVから消えます。
-                不安な場合は、先に coffee_log.csv をコピーしてバックアップしてください。
+                削除すると、この実験データはGoogleスプレッドシートから消えます。
+                不安な場合は、先にスプレッドシートをコピーしてバックアップしてください。
             </div>
         </div>
         """, unsafe_allow_html=True)
