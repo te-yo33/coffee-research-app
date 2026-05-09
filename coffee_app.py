@@ -250,10 +250,7 @@ def stylish_bar_chart(df, x_col, y_col, title):
         fontSize=20,
         anchor="start",
         fontWeight="bold"
-    ).configure_background(
-        "transparent"
     )
-
     return chart
 
 
@@ -1345,9 +1342,8 @@ with tab3:
             ).configure_legend(
                 labelColor="#f5d9ba",
                 titleColor="#ffd89f"
-            ).configure_background(
-                "transparent"
             )
+            
 
             st.markdown('<div class="chart-shell"><div class="chart-label">Flavor Aging Trend</div><div class="chart-caption">焙煎後日数ごとに味評価の平均を表示</div>', unsafe_allow_html=True)
             st.altair_chart(chart, width="stretch")
