@@ -3,6 +3,7 @@ import pandas as pd
 import html
 from datetime import datetime
 
+import altair as alt
 import gspread
 from google.oauth2.service_account import Credentials
 
@@ -117,6 +118,147 @@ def next_experiment_no(df):
     return int(exp_no.max()) + 1
 
 
+def section_header(icon, title, subtitle=""):
+    st.markdown(f"""
+    <div class="section-head">
+        <div class="section-icon">{icon}</div>
+        <div>
+            <div class="section-title">{title}</div>
+            <div class="section-subtitle">{subtitle}</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+# =========================
+# グラフ関数
+# =========================
+def stylish_line_chart(df, x_col, y_col, title, target_value=None, suffix=""):
+    chart_df = df[[x_col, y_col]].dropna().copy()
+    chart_df[x_col] = pd.to_numeric(chart_df[x_col], errors="coerce")
+    chart_df[y_col] = pd.to_numeric(chart_df[y_col], errors="coerce")
+    chart_df = chart_df.dropna()
+
+    if chart_df.empty:
+        return None
+
+    base = alt.Chart(chart_df).encode(
+        x=alt.X(f"{x_col}:Q", title=x_col, axis=alt.Axis(labelColor="#f5d9ba", titleColor="#ffd89f")),
+        y=alt.Y(f"{y_col}:Q", title=y_col, axis=alt.Axis(labelColor="#f5d9ba", titleColor="#ffd89f")),
+        tooltip=[
+            alt.Tooltip(f"{x_col}:Q", title=x_col),
+            alt.Tooltip(f"{y_col}:Q", title=y_col, format=".2f")
+        ]
+    )
+
+    line = base.mark_line(
+        color="#ffbd73",
+        strokeWidth=4
+    )
+
+    points = base.mark_circle(
+        color="#fff2d8",
+        size=95,
+        stroke="#ff9f43",
+        strokeWidth=2
+    )
+
+    chart = line + points
+
+    if target_value is not None:
+        rule_df = pd.DataFrame({y_col: [target_value]})
+        rule = alt.Chart(rule_df).mark_rule(
+            color="#7ee787",
+            strokeDash=[7, 7],
+            strokeWidth=2.5
+        ).encode(
+            y=f"{y_col}:Q"
+        )
+
+        text = alt.Chart(rule_df).mark_text(
+            text=f"TARGET {target_value}{suffix}",
+            color="#7ee787",
+            align="left",
+            dx=8,
+            dy=-8,
+            fontSize=13,
+            fontWeight="bold"
+        ).encode(
+            y=f"{y_col}:Q",
+            x=alt.value(20)
+        )
+
+        chart = chart + rule + text
+
+    return chart.properties(
+        title=title,
+        height=340
+    ).configure_view(
+        fill="#120a06",
+        strokeWidth=0
+    ).configure_axis(
+        grid=True,
+        gridColor="rgba(255,255,255,0.10)",
+        domainColor="rgba(255,255,255,0.20)",
+        tickColor="rgba(255,255,255,0.20)",
+        labelColor="#f5d9ba",
+        titleColor="#ffd89f",
+        labelFontSize=12,
+        titleFontSize=13
+    ).configure_title(
+        color="#fff2df",
+        fontSize=20,
+        anchor="start",
+        fontWeight="bold"
+    ).configure_background(
+        "transparent"
+    )
+
+
+def stylish_bar_chart(df, x_col, y_col, title):
+    chart_df = df[[x_col, y_col]].dropna().copy()
+
+    if chart_df.empty:
+        return None
+
+    chart = alt.Chart(chart_df).mark_bar(
+        cornerRadiusTopLeft=8,
+        cornerRadiusTopRight=8,
+        color="#ffbd73"
+    ).encode(
+        x=alt.X(f"{x_col}:N", title=x_col, sort=None, axis=alt.Axis(labelColor="#f5d9ba", titleColor="#ffd89f")),
+        y=alt.Y(f"{y_col}:Q", title=y_col, axis=alt.Axis(labelColor="#f5d9ba", titleColor="#ffd89f")),
+        tooltip=[
+            alt.Tooltip(f"{x_col}:N", title=x_col),
+            alt.Tooltip(f"{y_col}:Q", title=y_col, format=".2f")
+        ]
+    ).properties(
+        title=title,
+        height=320
+    ).configure_view(
+        fill="#120a06",
+        strokeWidth=0
+    ).configure_axis(
+        grid=True,
+        gridColor="rgba(255,255,255,0.10)",
+        domainColor="rgba(255,255,255,0.20)",
+        tickColor="rgba(255,255,255,0.20)",
+        labelColor="#f5d9ba",
+        titleColor="#ffd89f",
+        labelFontSize=12,
+        titleFontSize=13
+    ).configure_title(
+        color="#fff2df",
+        fontSize=20,
+        anchor="start",
+        fontWeight="bold"
+    ).configure_background(
+        "transparent"
+    )
+
+    return chart
+
+
 # =========================
 # Google Sheets 接続
 # =========================
@@ -204,11 +346,6 @@ st.set_page_config(
 # =========================
 st.markdown("""
 <style>
-/* =========================================================
-   LIGHT ROAST COFFEE LAB - Premium Dashboard Theme
-========================================================= */
-
-/* ===== 全体背景 ===== */
 .stApp {
     background:
         radial-gradient(circle at 8% 5%, rgba(255, 186, 105, 0.22), transparent 28%),
@@ -218,24 +355,20 @@ st.markdown("""
     color: #fff6ea;
 }
 
-/* ===== メインコンテナ ===== */
 .block-container {
     padding-top: 2rem;
     padding-bottom: 4rem;
     max-width: 1240px;
 }
 
-/* ===== 全体フォント ===== */
 html, body, [class*="css"] {
     font-family: "Yu Gothic", "Hiragino Sans", "Meiryo", sans-serif;
 }
 
-/* ===== 文字色の基本 ===== */
 p, span, div {
     color: inherit;
 }
 
-/* ===== 見出し ===== */
 h1, h2, h3 {
     color: #fff5e6 !important;
     font-weight: 950 !important;
@@ -252,14 +385,11 @@ h3 {
     color: #ffd9a8 !important;
 }
 
-/* =========================================================
-   Hero Header
-========================================================= */
 .hero-card {
     position: relative;
     overflow: hidden;
-    padding: 34px 38px;
-    border-radius: 34px;
+    padding: 36px 40px;
+    border-radius: 36px;
     background:
         linear-gradient(135deg, rgba(255,255,255,0.18), rgba(255,255,255,0.045)),
         linear-gradient(135deg, rgba(255, 181, 97, 0.10), rgba(80, 37, 17, 0.20));
@@ -330,9 +460,48 @@ h3 {
     line-height: 1.8;
 }
 
-/* =========================================================
-   Cards
-========================================================= */
+.section-head {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 18px 20px;
+    border-radius: 24px;
+    background:
+        linear-gradient(135deg, rgba(255,255,255,0.115), rgba(255,255,255,0.045));
+    border: 1px solid rgba(255, 226, 188, 0.16);
+    box-shadow:
+        0 14px 38px rgba(0,0,0,0.26),
+        inset 0 1px 0 rgba(255,255,255,0.10);
+    margin: 18px 0 16px 0;
+    backdrop-filter: blur(12px);
+}
+
+.section-icon {
+    width: 42px;
+    height: 42px;
+    display: grid;
+    place-items: center;
+    border-radius: 15px;
+    background: linear-gradient(135deg, #d18440, #ffc57e);
+    color: #1b0e06;
+    font-size: 22px;
+    font-weight: 1000;
+    box-shadow: 0 10px 24px rgba(255, 181, 97, 0.28);
+}
+
+.section-title {
+    color: #fff2df;
+    font-size: 19px;
+    font-weight: 1000;
+    letter-spacing: 0.03em;
+}
+
+.section-subtitle {
+    color: #f2cda8;
+    font-size: 13px;
+    margin-top: 3px;
+}
+
 .lab-card {
     background:
         linear-gradient(135deg, rgba(255,255,255,0.105), rgba(255,255,255,0.045));
@@ -360,7 +529,6 @@ h3 {
     line-height: 1.85;
 }
 
-/* ===== 条件表示ボックス ===== */
 .condition-box {
     background:
         linear-gradient(135deg, rgba(255,255,255,0.11), rgba(255,255,255,0.045));
@@ -388,7 +556,6 @@ h3 {
     line-height: 1.95;
 }
 
-/* ===== 削除エリア ===== */
 .danger-card {
     background:
         linear-gradient(135deg, rgba(150, 32, 22, 0.38), rgba(76, 18, 13, 0.24));
@@ -399,9 +566,6 @@ h3 {
     margin-top: 22px;
 }
 
-/* =========================================================
-   Tabs
-========================================================= */
 .stTabs [data-baseweb="tab-list"] {
     gap: 12px;
     background:
@@ -436,13 +600,23 @@ h3 {
         inset 0 1px 0 rgba(255,255,255,0.35);
 }
 
-/* =========================================================
-   Inputs
-========================================================= */
 label {
     color: #ffe7c9 !important;
-    font-weight: 850 !important;
+    font-weight: 900 !important;
     letter-spacing: 0.01em;
+}
+
+.stTextInput,
+.stNumberInput,
+.stTextArea,
+.stSelectbox {
+    background:
+        linear-gradient(135deg, rgba(255,255,255,0.075), rgba(255,255,255,0.032));
+    border: 1px solid rgba(255, 226, 188, 0.10);
+    border-radius: 18px;
+    padding: 12px 14px 14px 14px;
+    margin-bottom: 10px;
+    box-shadow: 0 8px 22px rgba(0,0,0,0.16);
 }
 
 .stTextInput input,
@@ -470,7 +644,6 @@ label {
     min-height: 96px;
 }
 
-/* ===== Selectbox ===== */
 .stSelectbox div[data-baseweb="select"] > div {
     background: rgba(255, 250, 242, 0.98) !important;
     color: #241205 !important;
@@ -481,9 +654,6 @@ label {
         inset 0 1px 0 rgba(255,255,255,0.85);
 }
 
-/* =========================================================
-   Buttons
-========================================================= */
 .stButton > button,
 .stFormSubmitButton > button {
     width: 100%;
@@ -522,12 +692,6 @@ label {
     color: #241005 !important;
 }
 
-.stButton > button:active,
-.stFormSubmitButton > button:active {
-    transform: translateY(0);
-}
-
-/* disabledも薄くしない */
 .stButton > button:disabled,
 .stButton > button[disabled],
 .stFormSubmitButton > button:disabled,
@@ -539,18 +703,6 @@ label {
     box-shadow: none !important;
 }
 
-.stButton > button:disabled p,
-.stButton > button[disabled] p,
-.stFormSubmitButton > button:disabled p,
-.stFormSubmitButton > button[disabled] p {
-    color: #321a0b !important;
-    font-weight: 1000 !important;
-    opacity: 1 !important;
-}
-
-/* =========================================================
-   Metrics
-========================================================= */
 [data-testid="stMetric"] {
     background:
         linear-gradient(135deg, rgba(255,255,255,0.12), rgba(255,255,255,0.045));
@@ -574,18 +726,12 @@ label {
     text-shadow: 0 3px 14px rgba(0,0,0,0.30);
 }
 
-/* =========================================================
-   Alerts
-========================================================= */
 .stAlert {
     border-radius: 20px;
     border: 1px solid rgba(255,255,255,0.16);
     box-shadow: 0 12px 34px rgba(0,0,0,0.22);
 }
 
-/* =========================================================
-   DataFrames / Charts
-========================================================= */
 [data-testid="stDataFrame"] {
     border-radius: 22px;
     overflow: hidden;
@@ -595,26 +741,32 @@ label {
     border: 1px solid rgba(255, 226, 188, 0.14);
 }
 
-[data-testid="stTable"] {
-    border-radius: 22px;
-    overflow: hidden;
-}
-
-/* グラフ周りをカードっぽく */
-[data-testid="stVegaLiteChart"],
-[data-testid="stArrowVegaLiteChart"],
-[data-testid="stDeckGlJsonChart"] {
+.chart-shell {
     background:
-        linear-gradient(135deg, rgba(255,255,255,0.09), rgba(255,255,255,0.035));
-    border: 1px solid rgba(255, 226, 188, 0.13);
-    border-radius: 22px;
-    padding: 12px;
-    box-shadow: 0 16px 42px rgba(0,0,0,0.25);
+        linear-gradient(135deg, rgba(255,255,255,0.10), rgba(255,255,255,0.035));
+    border: 1px solid rgba(255, 226, 188, 0.15);
+    border-radius: 26px;
+    padding: 18px;
+    margin-bottom: 26px;
+    box-shadow:
+        0 18px 50px rgba(0,0,0,0.32),
+        inset 0 1px 0 rgba(255,255,255,0.08);
 }
 
-/* =========================================================
-   Sliders
-========================================================= */
+.chart-label {
+    color: #ffd89f;
+    font-weight: 1000;
+    font-size: 17px;
+    margin-bottom: 8px;
+    letter-spacing: 0.02em;
+}
+
+.chart-caption {
+    color: #f0cdaa;
+    font-size: 13px;
+    margin-bottom: 12px;
+}
+
 .stSlider {
     background:
         linear-gradient(135deg, rgba(255,255,255,0.085), rgba(255,255,255,0.04));
@@ -625,9 +777,6 @@ label {
     box-shadow: 0 8px 22px rgba(0,0,0,0.18);
 }
 
-/* =========================================================
-   Caption / Divider
-========================================================= */
 [data-testid="stCaptionContainer"] {
     color: #f4c88e !important;
     font-weight: 650;
@@ -639,9 +788,6 @@ hr {
     margin-bottom: 1.6rem;
 }
 
-/* =========================================================
-   Checkbox
-========================================================= */
 .stCheckbox {
     background: rgba(255,255,255,0.065);
     padding: 10px 14px;
@@ -649,9 +795,6 @@ hr {
     border: 1px solid rgba(255, 226, 188, 0.11);
 }
 
-/* =========================================================
-   Scrollbar
-========================================================= */
 ::-webkit-scrollbar {
     width: 10px;
     height: 10px;
@@ -670,9 +813,6 @@ hr {
     background: linear-gradient(135deg, #b96b36, #ffc078);
 }
 
-/* =========================================================
-   Mobile Responsive
-========================================================= */
 @media (max-width: 768px) {
     .block-container {
         padding-top: 1rem;
@@ -787,7 +927,7 @@ with tab1:
     col1, col2 = st.columns(2)
 
     with col1:
-        st.subheader("基本条件")
+        section_header("☕", "基本条件", "豆・焙煎・レシピの土台を記録")
 
         bean_type = st.text_input("豆の種類", value="Brazil")
 
@@ -822,7 +962,7 @@ with tab1:
         )
 
     with col2:
-        st.subheader("抽出条件")
+        section_header("🧪", "抽出条件", "器具・挽き目・注湯の違いを記録")
 
         grind_size = st.text_input("挽き目", value="8.1")
         dripper = st.text_input("ドリッパー", value="V60")
@@ -933,6 +1073,8 @@ with tab2:
     if df.empty:
         st.warning("まだ条件が登録されていません。まずは①条件登録から始めてください。")
     else:
+        section_header("🎯", "測定する実験を選択", "抽出後のTDS・抽出収率・味評価を記録")
+
         exp_list = df["実験No"].tolist()
 
         selected_no = st.selectbox(
@@ -941,8 +1083,6 @@ with tab2:
         )
 
         target = df[df["実験No"] == selected_no].iloc[0]
-
-        st.subheader("対象の条件")
 
         roast_text = ""
         try:
@@ -971,7 +1111,7 @@ with tab2:
         col1, col2 = st.columns(2)
 
         with col1:
-            st.subheader("測定結果")
+            section_header("📐", "測定結果", "TDS・抽出量・抽出時間を入力")
 
             beverage_weight = st.number_input(
                 "抽出液量g",
@@ -995,7 +1135,7 @@ with tab2:
             )
 
         with col2:
-            st.subheader("味評価")
+            section_header("🌿", "味評価", "主観評価を1〜5で記録")
 
             acidity = st.slider("酸味", 1, 5, safe_int(target["酸味"], 3))
             sweetness = st.slider("甘味", 1, 5, safe_int(target["甘味"], 3))
@@ -1054,7 +1194,7 @@ with tab3:
 
     df = load_data()
 
-    st.subheader("実験ログ一覧")
+    section_header("📊", "実験ログ一覧", "Googleスプレッドシートに保存された全データ")
     st.dataframe(df, width="stretch")
 
     if df.empty:
@@ -1076,21 +1216,29 @@ with tab3:
         graph_df = graph_df.dropna(subset=["実験No"])
         valid_df = graph_df.dropna(subset=["TDS%", "抽出収率%"]).copy()
 
-        st.subheader("TDSの推移")
+        section_header("📈", "TDSの推移", "目標1.25%ラインを表示")
 
         if valid_df.empty:
             st.info("まだTDSが入力された実験がありません。")
         else:
-            st.line_chart(valid_df.set_index("実験No")["TDS%"])
+            chart = stylish_line_chart(valid_df, "実験No", "TDS%", "TDSの推移", target_value=1.25, suffix="%")
+            if chart is not None:
+                st.markdown('<div class="chart-shell"><div class="chart-label">TDS Trend</div><div class="chart-caption">点が各実験、緑の破線が目標TDS 1.25%</div>', unsafe_allow_html=True)
+                st.altair_chart(chart, width="stretch")
+                st.markdown('</div>', unsafe_allow_html=True)
 
-        st.subheader("抽出収率の推移")
+        section_header("⚖️", "抽出収率の推移", "目安20%ラインを表示")
 
         if valid_df.empty:
             st.info("まだ抽出収率が入力された実験がありません。")
         else:
-            st.line_chart(valid_df.set_index("実験No")["抽出収率%"])
+            chart = stylish_line_chart(valid_df, "実験No", "抽出収率%", "抽出収率の推移", target_value=20, suffix="%")
+            if chart is not None:
+                st.markdown('<div class="chart-shell"><div class="chart-label">Extraction Yield Trend</div><div class="chart-caption">18〜22%付近を中心に見ると抽出状態を判断しやすい</div>', unsafe_allow_html=True)
+                st.altair_chart(chart, width="stretch")
+                st.markdown('</div>', unsafe_allow_html=True)
 
-        st.subheader("目標TDS 1.25%に近い順")
+        section_header("🏆", "目標TDS 1.25%に近い順", "再現したい条件を探すランキング")
 
         if valid_df.empty:
             st.info("まだTDSが入力された実験がありません。")
@@ -1121,7 +1269,7 @@ with tab3:
             </div>
             """, unsafe_allow_html=True)
 
-        st.subheader("豆ごとの分析")
+        section_header("☕", "豆ごとの分析", "豆の種類ごとに平均値を比較")
 
         if valid_df.empty:
             st.info("まだ分析できるデータがありません。")
@@ -1144,7 +1292,7 @@ with tab3:
 
             st.dataframe(bean_analysis.round(2), width="stretch")
 
-        st.subheader("焙煎後日数ごとの味変化")
+        section_header("🌱", "焙煎後日数ごとの味変化", "香り・甘味・雑味の変化を追う")
 
         flavor_cols = ["酸味", "甘味", "苦味", "雑味", "香り", "飲みやすさ"]
         flavor_df = graph_df.dropna(subset=["焙煎後日数"]).copy()
@@ -1161,13 +1309,53 @@ with tab3:
                 flavor_df
                 .groupby("焙煎後日数")[flavor_cols]
                 .mean()
-                .sort_index()
+                .reset_index()
+                .sort_values("焙煎後日数")
             )
 
-            st.line_chart(flavor_by_days)
-            st.caption("焙煎後日数ごとに、酸味・甘味・雑味・香りなどの平均変化を確認できます。")
+            melted = flavor_by_days.melt(
+                id_vars="焙煎後日数",
+                value_vars=flavor_cols,
+                var_name="評価項目",
+                value_name="平均評価"
+            )
 
-        st.subheader("挽き目ごとの平均TDS")
+            chart = alt.Chart(melted).mark_line(
+                point=True,
+                strokeWidth=3
+            ).encode(
+                x=alt.X("焙煎後日数:Q", title="焙煎後日数"),
+                y=alt.Y("平均評価:Q", title="平均評価"),
+                color=alt.Color("評価項目:N", title="評価項目"),
+                tooltip=["焙煎後日数:Q", "評価項目:N", alt.Tooltip("平均評価:Q", format=".2f")]
+            ).properties(
+                title="焙煎後日数ごとの味変化",
+                height=340
+            ).configure_view(
+                fill="#120a06",
+                strokeWidth=0
+            ).configure_axis(
+                grid=True,
+                gridColor="rgba(255,255,255,0.10)",
+                labelColor="#f5d9ba",
+                titleColor="#ffd89f"
+            ).configure_title(
+                color="#fff2df",
+                fontSize=20,
+                anchor="start",
+                fontWeight="bold"
+            ).configure_legend(
+                labelColor="#f5d9ba",
+                titleColor="#ffd89f"
+            ).configure_background(
+                "transparent"
+            )
+
+            st.markdown('<div class="chart-shell"><div class="chart-label">Flavor Aging Trend</div><div class="chart-caption">焙煎後日数ごとに味評価の平均を表示</div>', unsafe_allow_html=True)
+            st.altair_chart(chart, width="stretch")
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        section_header("🌀", "挽き目ごとの平均TDS", "挽き目と濃度の関係を見る")
 
         grind_df = valid_df.copy()
 
@@ -1193,13 +1381,13 @@ with tab3:
 
             st.dataframe(grind_analysis.round(2), width="stretch")
 
-            chart_grind = grind_analysis.copy()
-            chart_grind["平均TDS"] = pd.to_numeric(chart_grind["平均TDS"], errors="coerce")
+            chart = stylish_bar_chart(grind_analysis, "挽き目", "平均TDS", "挽き目ごとの平均TDS")
+            if chart is not None:
+                st.markdown('<div class="chart-shell"><div class="chart-label">Grind Size vs TDS</div><div class="chart-caption">挽き目ごとの平均TDSを比較</div>', unsafe_allow_html=True)
+                st.altair_chart(chart, width="stretch")
+                st.markdown('</div>', unsafe_allow_html=True)
 
-            if not chart_grind["平均TDS"].dropna().empty:
-                st.bar_chart(chart_grind.set_index("挽き目")["平均TDS"])
-
-        st.subheader("雑味が強く出た条件の検出")
+        section_header("⚠️", "雑味が強く出た条件の検出", "雑味4以上の実験を自動抽出")
 
         off_df = graph_df.copy()
         off_df["雑味"] = pd.to_numeric(off_df["雑味"], errors="coerce")
@@ -1229,7 +1417,7 @@ with tab3:
             </div>
             """, unsafe_allow_html=True)
 
-        st.subheader("今日の結果から次回条件を提案")
+        section_header("🧭", "今日の結果から次回条件を提案", "最新実験から次に変えるべき条件を提案")
 
         if valid_df.empty:
             st.info("TDSと抽出収率が入力されると、次回条件の提案が表示されます。")
@@ -1309,6 +1497,8 @@ with tab4:
         </div>
         """, unsafe_allow_html=True)
 
+        section_header("🛠️", "編集する実験を選択", "過去データを修正・削除できます")
+
         edit_exp_list = df["実験No"].tolist()
 
         edit_selected_no = st.selectbox(
@@ -1319,8 +1509,6 @@ with tab4:
 
         edit_idx = df.index[df["実験No"] == edit_selected_no][0]
         edit_target = df.loc[edit_idx]
-
-        st.subheader("選択中のデータ")
 
         st.markdown(f"""
         <div class="condition-box">
@@ -1334,13 +1522,11 @@ with tab4:
         </div>
         """, unsafe_allow_html=True)
 
-        st.subheader("データを編集する")
-
         with st.form("edit_form"):
             edit_col1, edit_col2 = st.columns(2)
 
             with edit_col1:
-                st.markdown("### 基本条件")
+                section_header("☕", "基本条件を編集", "豆・湯量・鮮度条件")
 
                 edit_date = st.text_input("日付", value=str(edit_target["日付"]))
                 edit_bean_type = st.text_input("豆の種類", value=str(edit_target["豆の種類"]))
@@ -1356,13 +1542,11 @@ with tab4:
                 edit_water_weight = st.text_input("湯量g", value=str(edit_target["湯量g"]))
                 edit_water_temp = st.text_input("湯温℃", value=str(edit_target["湯温℃"]))
 
-                st.markdown("### 鮮度条件")
-
                 edit_days_after_roast = st.text_input("焙煎後日数", value=str(edit_target["焙煎後日数"]))
                 edit_days_after_open = st.text_input("開封後日数", value=str(edit_target["開封後日数"]))
 
             with edit_col2:
-                st.markdown("### 抽出条件")
+                section_header("🧪", "抽出条件を編集", "器具・注湯・蒸らし条件")
 
                 edit_grind_size = st.text_input("挽き目", value=str(edit_target["挽き目"]))
                 edit_dripper = st.text_input("ドリッパー", value=str(edit_target["ドリッパー"]))
@@ -1388,7 +1572,7 @@ with tab4:
             result_col1, result_col2 = st.columns(2)
 
             with result_col1:
-                st.markdown("### 測定結果")
+                section_header("📐", "測定結果を編集", "抽出量・TDS・抽出収率")
 
                 edit_beverage_weight = st.text_input("抽出液量g", value=str(edit_target["抽出液量g"]))
                 edit_brew_time = st.text_input("抽出時間秒", value=str(edit_target["抽出時間秒"]))
@@ -1404,7 +1588,7 @@ with tab4:
                 st.info(f"保存時の抽出収率：{recalculated_yield}")
 
             with result_col2:
-                st.markdown("### 味評価")
+                section_header("🌿", "味評価を編集", "1〜5で再入力")
 
                 rating_options = ["", "1", "2", "3", "4", "5"]
 
