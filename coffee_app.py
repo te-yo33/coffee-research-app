@@ -856,6 +856,22 @@ with tab1:
     st.markdown("---")
 
     if st.button("この条件を保存する"):
+        condition_errors = []
+
+        if coffee_weight <= 0:
+            condition_errors.append("豆量が0g以下です。豆量を入力してください。")
+
+        if water_weight <= 0:
+            condition_errors.append("湯量が0g以下です。湯量を入力してください。")
+
+        if water_temp <= 0:
+            condition_errors.append("湯温が0℃以下です。湯温を確認してください。")
+
+        if condition_errors:
+            for error in condition_errors:
+                st.error(error)
+            st.stop()
+
         new_row = {
             "実験No": exp_no,
             "日付": datetime.now().strftime("%Y-%m-%d %H:%M"),
@@ -995,7 +1011,33 @@ with tab2:
         with metric_col3:
             st.metric("抽出収率判定", yield_label)
 
+        validation_warnings = []
+
+        if tds <= 0:
+            validation_warnings.append("TDSが0%です。まだ測定していない場合は保存前に確認してください。")
+
+        if brew_time == 0:
+            validation_warnings.append("抽出時間が0秒です。スマホ入力ミスの可能性があります。")
+
+        water_weight_for_check = safe_float(target["湯量g"], 0)
+        if water_weight_for_check > 0 and beverage_weight > water_weight_for_check:
+            validation_warnings.append("抽出液量が湯量より大きくなっています。入力値を確認してください。")
+
+        confirm_warning_save = True
+        if validation_warnings:
+            st.warning("入力値に確認が必要な項目があります。")
+            for warning in validation_warnings:
+                st.write(f"・{warning}")
+            confirm_warning_save = st.checkbox(
+                "上の注意点を確認したうえで保存する",
+                key=f"confirm_warning_save_{selected_no}"
+            )
+
         if st.button("この結果を保存する"):
+            if validation_warnings and not confirm_warning_save:
+                st.error("注意点を確認するチェックを入れるまで保存できません。")
+                st.stop()
+
             idx = df.index[df["実験No"] == selected_no][0]
 
             df.at[idx, "抽出液量g"] = beverage_weight
@@ -1048,6 +1090,34 @@ with tab3:
         graph_df = graph_df.dropna(subset=["実験No"])
         valid_df = graph_df.dropna(subset=["TDS%", "抽出収率%"]).copy()
 
+        # =========================
+        # 未測定・測定済みステータス
+        # =========================
+        section_header("📝", "測定ステータス", "結果未入力の実験を自動で確認")
+
+        status_df = graph_df.copy()
+        status_df["測定ステータス"] = status_df["TDS%"].apply(
+            lambda x: "測定済み" if pd.notna(x) else "未測定"
+        )
+
+        status_count_col1, status_count_col2 = st.columns(2)
+        with status_count_col1:
+            st.metric("測定済み", int((status_df["測定ステータス"] == "測定済み").sum()))
+        with status_count_col2:
+            st.metric("未測定", int((status_df["測定ステータス"] == "未測定").sum()))
+
+        unmeasured_df = status_df[status_df["測定ステータス"] == "未測定"].copy()
+
+        if unmeasured_df.empty:
+            st.success("すべての実験に結果が入力されています。")
+        else:
+            unmeasured_nos = ", ".join(unmeasured_df["実験No"].astype(int).astype(str).tolist())
+            st.warning(f"結果未入力の実験があります：実験No.{unmeasured_nos}")
+            st.dataframe(
+                unmeasured_df[["実験No", "日付", "豆の種類", "焙煎度", "挽き目", "煎れ方"]],
+                width="stretch"
+            )
+
         section_header("📈", "TDSの推移", "標準グラフでシンプルに表示")
 
         if valid_df.empty:
@@ -1092,6 +1162,50 @@ with tab3:
                 </div>
             </div>
             """, unsafe_allow_html=True)
+
+        section_header("🌟", "成功レシピ候補", "TDS・抽出収率・味評価から良いレシピを抽出")
+
+        if valid_df.empty:
+            st.info("TDSと抽出収率が入力されると、成功レシピ候補が表示されます。")
+        else:
+            success_df = valid_df[
+                (valid_df["TDS%"] >= 1.20) &
+                (valid_df["TDS%"] <= 1.30) &
+                (valid_df["抽出収率%"] >= 18) &
+                (valid_df["抽出収率%"] <= 22) &
+                (valid_df["雑味"] <= 2) &
+                (valid_df["飲みやすさ"] >= 4)
+            ].copy()
+
+            if success_df.empty:
+                st.info("まだ成功レシピ候補はありません。条件は「TDS 1.20〜1.30、抽出収率18〜22、雑味2以下、飲みやすさ4以上」です。")
+            else:
+                success_df["目標との差"] = (success_df["TDS%"] - 1.25).abs()
+                success_df = success_df.sort_values(["目標との差", "飲みやすさ", "雑味"], ascending=[True, False, True])
+
+                st.success(f"成功レシピ候補が {len(success_df)} 件見つかりました。")
+
+                success_cols = [
+                    "実験No", "豆の種類", "焙煎度", "挽き目",
+                    "ドリッパー", "フィルター", "煎れ方",
+                    "TDS%", "抽出収率%", "雑味", "飲みやすさ", "コメント"
+                ]
+
+                st.dataframe(success_df[success_cols], width="stretch")
+
+                top_success = success_df.iloc[0]
+
+                st.markdown(f"""
+                <div class="lab-card">
+                    <div class="lab-card-title">今いちばん再現したい成功レシピ</div>
+                    <div class="lab-card-body">
+                        実験No.{int(top_success["実験No"])} が、現時点で最も良い成功レシピ候補です。<br>
+                        TDS：{top_success["TDS%"]:.2f}% ／ 抽出収率：{top_success["抽出収率%"]:.2f}% ／ 雑味：{top_success["雑味"]:.0f} ／ 飲みやすさ：{top_success["飲みやすさ"]:.0f}<br>
+                        豆：{esc(top_success["豆の種類"])} ／ 焙煎度：{esc(top_success["焙煎度"])} ／ 挽き目：{esc(top_success["挽き目"])}<br>
+                        ドリッパー：{esc(top_success["ドリッパー"])} ／ フィルター：{esc(top_success["フィルター"])} ／ 煎れ方：{esc(top_success["煎れ方"])}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
 
         section_header("☕", "豆ごとの分析", "豆の種類ごとに平均値を比較")
 
