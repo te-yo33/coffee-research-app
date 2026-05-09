@@ -131,78 +131,88 @@ def section_header(icon, title, subtitle=""):
 
 
 # =========================
-# グラフ関数
+# グラフ関数：見やすさ優先版
 # =========================
-def stylish_line_chart(df, x_col, y_col, title, target_value=None, suffix=""):
+def readable_line_chart(df, x_col, y_col, title, target_value=None, target_label="TARGET"):
     chart_df = df[[x_col, y_col]].dropna().copy()
     chart_df[x_col] = pd.to_numeric(chart_df[x_col], errors="coerce")
     chart_df[y_col] = pd.to_numeric(chart_df[y_col], errors="coerce")
-    chart_df = chart_df.dropna()
+    chart_df = chart_df.dropna().sort_values(x_col)
 
     if chart_df.empty:
         return None
 
+    y_min = chart_df[y_col].min()
+    y_max = chart_df[y_col].max()
+
+    if target_value is not None:
+        y_min = min(y_min, target_value)
+        y_max = max(y_max, target_value)
+
+    if y_min == y_max:
+        y_min -= 0.1
+        y_max += 0.1
+
+    padding = (y_max - y_min) * 0.18
+    y_scale = alt.Scale(domain=[y_min - padding, y_max + padding])
+
     base = alt.Chart(chart_df).encode(
-        x=alt.X(f"{x_col}:Q", title=x_col, axis=alt.Axis(labelColor="#f5d9ba", titleColor="#ffd89f")),
-        y=alt.Y(f"{y_col}:Q", title=y_col, axis=alt.Axis(labelColor="#f5d9ba", titleColor="#ffd89f")),
+        x=alt.X(
+            f"{x_col}:Q",
+            title=x_col,
+            axis=alt.Axis(labelColor="#3a2516", titleColor="#5a321d", grid=False)
+        ),
+        y=alt.Y(
+            f"{y_col}:Q",
+            title=y_col,
+            scale=y_scale,
+            axis=alt.Axis(labelColor="#3a2516", titleColor="#5a321d", gridColor="#e8ddd1")
+        ),
         tooltip=[
             alt.Tooltip(f"{x_col}:Q", title=x_col),
             alt.Tooltip(f"{y_col}:Q", title=y_col, format=".2f")
         ]
     )
 
+    area = base.mark_area(
+        color="#f2b36d",
+        opacity=0.18,
+        interpolate="monotone"
+    )
+
     line = base.mark_line(
-        color="#ffbd73",
-        strokeWidth=4
+        color="#9b4f21",
+        strokeWidth=4,
+        interpolate="monotone"
     )
 
     points = base.mark_circle(
-        color="#fff2d8",
-        size=95,
-        stroke="#ff9f43",
-        strokeWidth=2
+        color="#ffffff",
+        size=115,
+        stroke="#9b4f21",
+        strokeWidth=2.5
     )
 
-    chart = line + points
+    chart = area + line + points
 
     if target_value is not None:
-        rule_df = pd.DataFrame({y_col: [target_value]})
-        rule = alt.Chart(rule_df).mark_rule(
-            color="#7ee787",
-            strokeDash=[7, 7],
+        target_df = pd.DataFrame({y_col: [target_value]})
+        rule = alt.Chart(target_df).mark_rule(
+            color="#2e7d32",
+            strokeDash=[7, 6],
             strokeWidth=2.5
-        ).encode(
-            y=f"{y_col}:Q"
-        )
+        ).encode(y=f"{y_col}:Q")
 
-        text = alt.Chart(rule_df).mark_text(
-            text=f"TARGET {target_value}{suffix}",
-            color="#7ee787",
-            align="left",
-            dx=8,
-            dy=-8,
-            fontSize=13,
-            fontWeight="bold"
-        ).encode(
-            y=f"{y_col}:Q",
-            x=alt.value(20)
-        )
-
-        chart = chart + rule + text
+        chart = chart + rule
 
     return chart.properties(
         title=title,
         height=340
     ).configure_view(
-        fill="#120a06",
-        strokeWidth=0
+        fill="#fffaf2",
+        stroke="#d9b98b",
+        strokeWidth=1.5
     ).configure_axis(
-        grid=True,
-        gridColor="rgba(255,255,255,0.10)",
-        domainColor="rgba(255,255,255,0.20)",
-        tickColor="rgba(255,255,255,0.20)",
-        labelColor="#f5d9ba",
-        titleColor="#ffd89f",
         labelFontSize=12,
         titleFontSize=13
     ).configure_title(
@@ -213,8 +223,62 @@ def stylish_line_chart(df, x_col, y_col, title, target_value=None, suffix=""):
     )
 
 
-def stylish_bar_chart(df, x_col, y_col, title):
+def readable_multi_line_chart(df, x_col, y_col, color_col, title):
+    chart_df = df[[x_col, y_col, color_col]].dropna().copy()
+    chart_df[x_col] = pd.to_numeric(chart_df[x_col], errors="coerce")
+    chart_df[y_col] = pd.to_numeric(chart_df[y_col], errors="coerce")
+    chart_df = chart_df.dropna().sort_values(x_col)
+
+    if chart_df.empty:
+        return None
+
+    chart = alt.Chart(chart_df).mark_line(
+        point=True,
+        strokeWidth=3,
+        interpolate="monotone"
+    ).encode(
+        x=alt.X(
+            f"{x_col}:Q",
+            title=x_col,
+            axis=alt.Axis(labelColor="#3a2516", titleColor="#5a321d", grid=False)
+        ),
+        y=alt.Y(
+            f"{y_col}:Q",
+            title=y_col,
+            axis=alt.Axis(labelColor="#3a2516", titleColor="#5a321d", gridColor="#e8ddd1")
+        ),
+        color=alt.Color(
+            f"{color_col}:N",
+            title=color_col,
+            scale=alt.Scale(scheme="tableau10"),
+            legend=alt.Legend(labelColor="#fff2df", titleColor="#ffd89f")
+        ),
+        tooltip=[
+            alt.Tooltip(f"{x_col}:Q", title=x_col),
+            alt.Tooltip(f"{color_col}:N", title=color_col),
+            alt.Tooltip(f"{y_col}:Q", title=y_col, format=".2f")
+        ]
+    ).properties(
+        title=title,
+        height=340
+    ).configure_view(
+        fill="#fffaf2",
+        stroke="#d9b98b",
+        strokeWidth=1.5
+    ).configure_title(
+        color="#fff2df",
+        fontSize=20,
+        anchor="start",
+        fontWeight="bold"
+    )
+
+    return chart
+
+
+def readable_bar_chart(df, x_col, y_col, title):
     chart_df = df[[x_col, y_col]].dropna().copy()
+    chart_df[y_col] = pd.to_numeric(chart_df[y_col], errors="coerce")
+    chart_df = chart_df.dropna()
 
     if chart_df.empty:
         return None
@@ -222,10 +286,19 @@ def stylish_bar_chart(df, x_col, y_col, title):
     chart = alt.Chart(chart_df).mark_bar(
         cornerRadiusTopLeft=8,
         cornerRadiusTopRight=8,
-        color="#ffbd73"
+        color="#b86a2c"
     ).encode(
-        x=alt.X(f"{x_col}:N", title=x_col, sort=None, axis=alt.Axis(labelColor="#f5d9ba", titleColor="#ffd89f")),
-        y=alt.Y(f"{y_col}:Q", title=y_col, axis=alt.Axis(labelColor="#f5d9ba", titleColor="#ffd89f")),
+        x=alt.X(
+            f"{x_col}:N",
+            title=x_col,
+            sort=None,
+            axis=alt.Axis(labelColor="#3a2516", titleColor="#5a321d")
+        ),
+        y=alt.Y(
+            f"{y_col}:Q",
+            title=y_col,
+            axis=alt.Axis(labelColor="#3a2516", titleColor="#5a321d", gridColor="#e8ddd1")
+        ),
         tooltip=[
             alt.Tooltip(f"{x_col}:N", title=x_col),
             alt.Tooltip(f"{y_col}:Q", title=y_col, format=".2f")
@@ -234,23 +307,16 @@ def stylish_bar_chart(df, x_col, y_col, title):
         title=title,
         height=320
     ).configure_view(
-        fill="#120a06",
-        strokeWidth=0
-    ).configure_axis(
-        grid=True,
-        gridColor="rgba(255,255,255,0.10)",
-        domainColor="rgba(255,255,255,0.20)",
-        tickColor="rgba(255,255,255,0.20)",
-        labelColor="#f5d9ba",
-        titleColor="#ffd89f",
-        labelFontSize=12,
-        titleFontSize=13
+        fill="#fffaf2",
+        stroke="#d9b98b",
+        strokeWidth=1.5
     ).configure_title(
         color="#fff2df",
         fontSize=20,
         anchor="start",
         fontWeight="bold"
     )
+
     return chart
 
 
@@ -497,7 +563,7 @@ h3 {
     margin-top: 3px;
 }
 
-.lab-card {
+.lab-card, .condition-box {
     background:
         linear-gradient(135deg, rgba(255,255,255,0.105), rgba(255,255,255,0.045));
     border: 1px solid rgba(255, 226, 188, 0.17);
@@ -510,7 +576,7 @@ h3 {
     backdrop-filter: blur(12px);
 }
 
-.lab-card-title {
+.lab-card-title, .condition-title {
     color: #ffd89f;
     font-weight: 950;
     font-size: 17px;
@@ -518,37 +584,10 @@ h3 {
     letter-spacing: 0.02em;
 }
 
-.lab-card-body {
+.lab-card-body, .condition-text {
     color: #f6ddc1;
     font-size: 14px;
     line-height: 1.85;
-}
-
-.condition-box {
-    background:
-        linear-gradient(135deg, rgba(255,255,255,0.11), rgba(255,255,255,0.045));
-    border: 1px solid rgba(255, 226, 188, 0.18);
-    border-radius: 24px;
-    padding: 20px 22px;
-    box-shadow:
-        0 16px 42px rgba(0,0,0,0.30),
-        inset 0 1px 0 rgba(255,255,255,0.10);
-    margin-bottom: 16px;
-    backdrop-filter: blur(12px);
-}
-
-.condition-title {
-    font-size: 16px;
-    font-weight: 950;
-    color: #ffd89f;
-    margin-bottom: 12px;
-    letter-spacing: 0.02em;
-}
-
-.condition-text {
-    color: #f7dfc5;
-    font-size: 14px;
-    line-height: 1.95;
 }
 
 .danger-card {
@@ -687,17 +726,6 @@ label {
     color: #241005 !important;
 }
 
-.stButton > button:disabled,
-.stButton > button[disabled],
-.stFormSubmitButton > button:disabled,
-.stFormSubmitButton > button[disabled] {
-    background: linear-gradient(135deg, #b9885b, #d8b889) !important;
-    color: #321a0b !important;
-    border: 2px solid rgba(255, 225, 180, 0.80) !important;
-    opacity: 0.98 !important;
-    box-shadow: none !important;
-}
-
 [data-testid="stMetric"] {
     background:
         linear-gradient(135deg, rgba(255,255,255,0.12), rgba(255,255,255,0.045));
@@ -738,8 +766,8 @@ label {
 
 .chart-shell {
     background:
-        linear-gradient(135deg, rgba(255,255,255,0.10), rgba(255,255,255,0.035));
-    border: 1px solid rgba(255, 226, 188, 0.15);
+        linear-gradient(135deg, rgba(255,255,255,0.11), rgba(255,255,255,0.04));
+    border: 1px solid rgba(255, 226, 188, 0.17);
     border-radius: 26px;
     padding: 18px;
     margin-bottom: 26px;
@@ -1216,9 +1244,9 @@ with tab3:
         if valid_df.empty:
             st.info("まだTDSが入力された実験がありません。")
         else:
-            chart = stylish_line_chart(valid_df, "実験No", "TDS%", "TDSの推移", target_value=1.25, suffix="%")
+            chart = readable_line_chart(valid_df, "実験No", "TDS%", "TDSの推移", target_value=1.25, target_label="TARGET 1.25%")
             if chart is not None:
-                st.markdown('<div class="chart-shell"><div class="chart-label">TDS Trend</div><div class="chart-caption">点が各実験、緑の破線が目標TDS 1.25%</div>', unsafe_allow_html=True)
+                st.markdown('<div class="chart-shell"><div class="chart-label">TDS Trend</div><div class="chart-caption">白背景で読みやすく、濃いブラウン線で推移を表示。緑の破線が目標TDS 1.25%</div>', unsafe_allow_html=True)
                 st.altair_chart(chart, width="stretch")
                 st.markdown('</div>', unsafe_allow_html=True)
 
@@ -1227,7 +1255,7 @@ with tab3:
         if valid_df.empty:
             st.info("まだ抽出収率が入力された実験がありません。")
         else:
-            chart = stylish_line_chart(valid_df, "実験No", "抽出収率%", "抽出収率の推移", target_value=20, suffix="%")
+            chart = readable_line_chart(valid_df, "実験No", "抽出収率%", "抽出収率の推移", target_value=20, target_label="TARGET 20%")
             if chart is not None:
                 st.markdown('<div class="chart-shell"><div class="chart-label">Extraction Yield Trend</div><div class="chart-caption">18〜22%付近を中心に見ると抽出状態を判断しやすい</div>', unsafe_allow_html=True)
                 st.altair_chart(chart, width="stretch")
@@ -1315,39 +1343,11 @@ with tab3:
                 value_name="平均評価"
             )
 
-            chart = alt.Chart(melted).mark_line(
-                point=True,
-                strokeWidth=3
-            ).encode(
-                x=alt.X("焙煎後日数:Q", title="焙煎後日数"),
-                y=alt.Y("平均評価:Q", title="平均評価"),
-                color=alt.Color("評価項目:N", title="評価項目"),
-                tooltip=["焙煎後日数:Q", "評価項目:N", alt.Tooltip("平均評価:Q", format=".2f")]
-            ).properties(
-                title="焙煎後日数ごとの味変化",
-                height=340
-            ).configure_view(
-                fill="#120a06",
-                strokeWidth=0
-            ).configure_axis(
-                grid=True,
-                gridColor="rgba(255,255,255,0.10)",
-                labelColor="#f5d9ba",
-                titleColor="#ffd89f"
-            ).configure_title(
-                color="#fff2df",
-                fontSize=20,
-                anchor="start",
-                fontWeight="bold"
-            ).configure_legend(
-                labelColor="#f5d9ba",
-                titleColor="#ffd89f"
-            )
-            
-
-            st.markdown('<div class="chart-shell"><div class="chart-label">Flavor Aging Trend</div><div class="chart-caption">焙煎後日数ごとに味評価の平均を表示</div>', unsafe_allow_html=True)
-            st.altair_chart(chart, width="stretch")
-            st.markdown('</div>', unsafe_allow_html=True)
+            chart = readable_multi_line_chart(melted, "焙煎後日数", "平均評価", "評価項目", "焙煎後日数ごとの味変化")
+            if chart is not None:
+                st.markdown('<div class="chart-shell"><div class="chart-label">Flavor Aging Trend</div><div class="chart-caption">焙煎後日数ごとに味評価の平均を表示</div>', unsafe_allow_html=True)
+                st.altair_chart(chart, width="stretch")
+                st.markdown('</div>', unsafe_allow_html=True)
 
         section_header("🌀", "挽き目ごとの平均TDS", "挽き目と濃度の関係を見る")
 
@@ -1375,7 +1375,7 @@ with tab3:
 
             st.dataframe(grind_analysis.round(2), width="stretch")
 
-            chart = stylish_bar_chart(grind_analysis, "挽き目", "平均TDS", "挽き目ごとの平均TDS")
+            chart = readable_bar_chart(grind_analysis, "挽き目", "平均TDS", "挽き目ごとの平均TDS")
             if chart is not None:
                 st.markdown('<div class="chart-shell"><div class="chart-label">Grind Size vs TDS</div><div class="chart-caption">挽き目ごとの平均TDSを比較</div>', unsafe_allow_html=True)
                 st.altair_chart(chart, width="stretch")
