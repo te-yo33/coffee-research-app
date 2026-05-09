@@ -3,7 +3,6 @@ import pandas as pd
 import html
 from datetime import datetime
 
-import altair as alt
 import gspread
 from google.oauth2.service_account import Credentials
 
@@ -128,196 +127,6 @@ def section_header(icon, title, subtitle=""):
         </div>
     </div>
     """, unsafe_allow_html=True)
-
-
-# =========================
-# グラフ関数：見やすさ優先版
-# =========================
-def readable_line_chart(df, x_col, y_col, title, target_value=None, target_label="TARGET"):
-    chart_df = df[[x_col, y_col]].dropna().copy()
-    chart_df[x_col] = pd.to_numeric(chart_df[x_col], errors="coerce")
-    chart_df[y_col] = pd.to_numeric(chart_df[y_col], errors="coerce")
-    chart_df = chart_df.dropna().sort_values(x_col)
-
-    if chart_df.empty:
-        return None
-
-    y_min = chart_df[y_col].min()
-    y_max = chart_df[y_col].max()
-
-    if target_value is not None:
-        y_min = min(y_min, target_value)
-        y_max = max(y_max, target_value)
-
-    if y_min == y_max:
-        y_min -= 0.1
-        y_max += 0.1
-
-    padding = (y_max - y_min) * 0.18
-    y_scale = alt.Scale(domain=[y_min - padding, y_max + padding])
-
-    base = alt.Chart(chart_df).encode(
-        x=alt.X(
-            f"{x_col}:Q",
-            title=x_col,
-            axis=alt.Axis(labelColor="#3a2516", titleColor="#5a321d", grid=False)
-        ),
-        y=alt.Y(
-            f"{y_col}:Q",
-            title=y_col,
-            scale=y_scale,
-            axis=alt.Axis(labelColor="#3a2516", titleColor="#5a321d", gridColor="#e8ddd1")
-        ),
-        tooltip=[
-            alt.Tooltip(f"{x_col}:Q", title=x_col),
-            alt.Tooltip(f"{y_col}:Q", title=y_col, format=".2f")
-        ]
-    )
-
-    area = base.mark_area(
-        color="#f2b36d",
-        opacity=0.18,
-        interpolate="monotone"
-    )
-
-    line = base.mark_line(
-        color="#9b4f21",
-        strokeWidth=4,
-        interpolate="monotone"
-    )
-
-    points = base.mark_circle(
-        color="#ffffff",
-        size=115,
-        stroke="#9b4f21",
-        strokeWidth=2.5
-    )
-
-    chart = area + line + points
-
-    if target_value is not None:
-        target_df = pd.DataFrame({y_col: [target_value]})
-        rule = alt.Chart(target_df).mark_rule(
-            color="#2e7d32",
-            strokeDash=[7, 6],
-            strokeWidth=2.5
-        ).encode(y=f"{y_col}:Q")
-
-        chart = chart + rule
-
-    return chart.properties(
-        title=title,
-        height=340
-    ).configure_view(
-        fill="#fffaf2",
-        stroke="#d9b98b",
-        strokeWidth=1.5
-    ).configure_axis(
-        labelFontSize=12,
-        titleFontSize=13
-    ).configure_title(
-        color="#fff2df",
-        fontSize=20,
-        anchor="start",
-        fontWeight="bold"
-    )
-
-
-def readable_multi_line_chart(df, x_col, y_col, color_col, title):
-    chart_df = df[[x_col, y_col, color_col]].dropna().copy()
-    chart_df[x_col] = pd.to_numeric(chart_df[x_col], errors="coerce")
-    chart_df[y_col] = pd.to_numeric(chart_df[y_col], errors="coerce")
-    chart_df = chart_df.dropna().sort_values(x_col)
-
-    if chart_df.empty:
-        return None
-
-    chart = alt.Chart(chart_df).mark_line(
-        point=True,
-        strokeWidth=3,
-        interpolate="monotone"
-    ).encode(
-        x=alt.X(
-            f"{x_col}:Q",
-            title=x_col,
-            axis=alt.Axis(labelColor="#3a2516", titleColor="#5a321d", grid=False)
-        ),
-        y=alt.Y(
-            f"{y_col}:Q",
-            title=y_col,
-            axis=alt.Axis(labelColor="#3a2516", titleColor="#5a321d", gridColor="#e8ddd1")
-        ),
-        color=alt.Color(
-            f"{color_col}:N",
-            title=color_col,
-            scale=alt.Scale(scheme="tableau10"),
-            legend=alt.Legend(labelColor="#fff2df", titleColor="#ffd89f")
-        ),
-        tooltip=[
-            alt.Tooltip(f"{x_col}:Q", title=x_col),
-            alt.Tooltip(f"{color_col}:N", title=color_col),
-            alt.Tooltip(f"{y_col}:Q", title=y_col, format=".2f")
-        ]
-    ).properties(
-        title=title,
-        height=340
-    ).configure_view(
-        fill="#fffaf2",
-        stroke="#d9b98b",
-        strokeWidth=1.5
-    ).configure_title(
-        color="#fff2df",
-        fontSize=20,
-        anchor="start",
-        fontWeight="bold"
-    )
-
-    return chart
-
-
-def readable_bar_chart(df, x_col, y_col, title):
-    chart_df = df[[x_col, y_col]].dropna().copy()
-    chart_df[y_col] = pd.to_numeric(chart_df[y_col], errors="coerce")
-    chart_df = chart_df.dropna()
-
-    if chart_df.empty:
-        return None
-
-    chart = alt.Chart(chart_df).mark_bar(
-        cornerRadiusTopLeft=8,
-        cornerRadiusTopRight=8,
-        color="#b86a2c"
-    ).encode(
-        x=alt.X(
-            f"{x_col}:N",
-            title=x_col,
-            sort=None,
-            axis=alt.Axis(labelColor="#3a2516", titleColor="#5a321d")
-        ),
-        y=alt.Y(
-            f"{y_col}:Q",
-            title=y_col,
-            axis=alt.Axis(labelColor="#3a2516", titleColor="#5a321d", gridColor="#e8ddd1")
-        ),
-        tooltip=[
-            alt.Tooltip(f"{x_col}:N", title=x_col),
-            alt.Tooltip(f"{y_col}:Q", title=y_col, format=".2f")
-        ]
-    ).properties(
-        title=title,
-        height=320
-    ).configure_view(
-        fill="#fffaf2",
-        stroke="#d9b98b",
-        strokeWidth=1.5
-    ).configure_title(
-        color="#fff2df",
-        fontSize=20,
-        anchor="start",
-        fontWeight="bold"
-    )
-
-    return chart
 
 
 # =========================
@@ -1239,27 +1048,19 @@ with tab3:
         graph_df = graph_df.dropna(subset=["実験No"])
         valid_df = graph_df.dropna(subset=["TDS%", "抽出収率%"]).copy()
 
-        section_header("📈", "TDSの推移", "目標1.25%ラインを表示")
+        section_header("📈", "TDSの推移", "標準グラフでシンプルに表示")
 
         if valid_df.empty:
             st.info("まだTDSが入力された実験がありません。")
         else:
-            chart = readable_line_chart(valid_df, "実験No", "TDS%", "TDSの推移", target_value=1.25, target_label="TARGET 1.25%")
-            if chart is not None:
-                st.markdown('<div class="chart-shell"><div class="chart-label">TDS Trend</div><div class="chart-caption">白背景で読みやすく、濃いブラウン線で推移を表示。緑の破線が目標TDS 1.25%</div>', unsafe_allow_html=True)
-                st.altair_chart(chart, width="stretch")
-                st.markdown('</div>', unsafe_allow_html=True)
+            st.line_chart(valid_df.set_index("実験No")["TDS%"])
 
-        section_header("⚖️", "抽出収率の推移", "目安20%ラインを表示")
+        section_header("⚖️", "抽出収率の推移", "標準グラフでシンプルに表示")
 
         if valid_df.empty:
             st.info("まだ抽出収率が入力された実験がありません。")
         else:
-            chart = readable_line_chart(valid_df, "実験No", "抽出収率%", "抽出収率の推移", target_value=20, target_label="TARGET 20%")
-            if chart is not None:
-                st.markdown('<div class="chart-shell"><div class="chart-label">Extraction Yield Trend</div><div class="chart-caption">18〜22%付近を中心に見ると抽出状態を判断しやすい</div>', unsafe_allow_html=True)
-                st.altair_chart(chart, width="stretch")
-                st.markdown('</div>', unsafe_allow_html=True)
+            st.line_chart(valid_df.set_index("実験No")["抽出収率%"])
 
         section_header("🏆", "目標TDS 1.25%に近い順", "再現したい条件を探すランキング")
 
@@ -1332,22 +1133,11 @@ with tab3:
                 flavor_df
                 .groupby("焙煎後日数")[flavor_cols]
                 .mean()
-                .reset_index()
-                .sort_values("焙煎後日数")
+                .sort_index()
             )
 
-            melted = flavor_by_days.melt(
-                id_vars="焙煎後日数",
-                value_vars=flavor_cols,
-                var_name="評価項目",
-                value_name="平均評価"
-            )
-
-            chart = readable_multi_line_chart(melted, "焙煎後日数", "平均評価", "評価項目", "焙煎後日数ごとの味変化")
-            if chart is not None:
-                st.markdown('<div class="chart-shell"><div class="chart-label">Flavor Aging Trend</div><div class="chart-caption">焙煎後日数ごとに味評価の平均を表示</div>', unsafe_allow_html=True)
-                st.altair_chart(chart, width="stretch")
-                st.markdown('</div>', unsafe_allow_html=True)
+            st.line_chart(flavor_by_days)
+            st.caption("焙煎後日数ごとに、酸味・甘味・雑味・香りなどの平均変化を確認できます。")
 
         section_header("🌀", "挽き目ごとの平均TDS", "挽き目と濃度の関係を見る")
 
@@ -1375,11 +1165,11 @@ with tab3:
 
             st.dataframe(grind_analysis.round(2), width="stretch")
 
-            chart = readable_bar_chart(grind_analysis, "挽き目", "平均TDS", "挽き目ごとの平均TDS")
-            if chart is not None:
-                st.markdown('<div class="chart-shell"><div class="chart-label">Grind Size vs TDS</div><div class="chart-caption">挽き目ごとの平均TDSを比較</div>', unsafe_allow_html=True)
-                st.altair_chart(chart, width="stretch")
-                st.markdown('</div>', unsafe_allow_html=True)
+            chart_grind = grind_analysis.copy()
+            chart_grind["平均TDS"] = pd.to_numeric(chart_grind["平均TDS"], errors="coerce")
+
+            if not chart_grind["平均TDS"].dropna().empty:
+                st.bar_chart(chart_grind.set_index("挽き目")["平均TDS"])
 
         section_header("⚠️", "雑味が強く出た条件の検出", "雑味4以上の実験を自動抽出")
 
