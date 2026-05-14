@@ -104,7 +104,7 @@ def judge_sca_tds(tds):
     elif tds <= 1.35:
         return "標準的な濃さ", "SCA風の目安では、濃度は良い範囲に入っています。"
     else:
-        return "濃いめ", "SCA風の目安では、濃度が高めです。重さや苦味が出ていないか確認すると良さそうです。"
+        return "濃いめ", "SCA風の目安では、濃度が高めです。苦味や重さが出ていないか確認すると良さそうです。"
 
 
 def judge_sca_yield(extraction_yield):
@@ -413,28 +413,6 @@ label {
 [data-testid="stDataFrame"] {
     border-radius: 18px;
     overflow: hidden;
-}
-
-.chart-shell {
-    background: linear-gradient(135deg, rgba(255,255,255,0.11), rgba(255,255,255,0.04));
-    border: 1px solid rgba(255, 226, 188, 0.17);
-    border-radius: 26px;
-    padding: 18px;
-    margin-bottom: 26px;
-    box-shadow: 0 18px 50px rgba(0,0,0,0.32);
-}
-
-.chart-label {
-    color: #ffd89f;
-    font-weight: 1000;
-    font-size: 17px;
-    margin-bottom: 8px;
-}
-
-.chart-caption {
-    color: #f0cdaa;
-    font-size: 13px;
-    margin-bottom: 12px;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -857,7 +835,7 @@ with tab3:
         valid_df = graph_df.dropna(subset=["TDS%", "抽出収率%"]).copy()
 
         # =========================
-        # 未測定・測定済みステータス
+        # 測定ステータス
         # =========================
         section_header("📝", "測定ステータス", "結果未入力の実験を自動で確認")
 
@@ -898,7 +876,7 @@ with tab3:
                 <div class="lab-card-body">
                     横軸は抽出収率%、縦軸はTDS%です。<br>
                     目安として、TDS 1.15〜1.35%、抽出収率 18〜22% の範囲を表示しています。<br>
-                    ただし、浅煎り・アイス・好みによって理想値は変わるので、味評価とセットで見てください。
+                    グラフ内は文字化け防止のため英語表記にしています。
                 </div>
             </div>
             """, unsafe_allow_html=True)
@@ -907,8 +885,8 @@ with tab3:
 
             fig, ax = plt.subplots(figsize=(8, 6))
 
-            ax.axvspan(18, 22, alpha=0.12, label="抽出収率の目安 18〜22%")
-            ax.axhspan(1.15, 1.35, alpha=0.12, label="TDSの目安 1.15〜1.35%")
+            ax.axvspan(18, 22, alpha=0.12, label="Extraction Yield 18-22%")
+            ax.axhspan(1.15, 1.35, alpha=0.12, label="TDS 1.15-1.35%")
 
             ideal_box = plt.Rectangle(
                 (18, 1.15),
@@ -933,9 +911,9 @@ with tab3:
                     fontsize=9
                 )
 
-            ax.set_xlabel("抽出収率 %")
+            ax.set_xlabel("Extraction Yield %")
             ax.set_ylabel("TDS %")
-            ax.set_title("SCA風 ブリューイングコントロールチャート")
+            ax.set_title("SCA Brewing Control Chart")
 
             x_min = min(10, sca_df["抽出収率%"].min() - 1)
             x_max = max(24, sca_df["抽出収率%"].max() + 1)
