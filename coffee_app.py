@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import matplotlib.pyplot as plt
 import html
 from datetime import datetime
 
@@ -95,6 +96,24 @@ def judge_yield(extraction_yield):
         return "適正範囲"
     else:
         return "過抽出気味"
+
+
+def judge_sca_tds(tds):
+    if tds < 1.15:
+        return "薄め", "SCA風の目安では、濃度が低めです。アイスや浅煎りでは低めでも飲みやすい場合があります。"
+    elif tds <= 1.35:
+        return "標準的な濃さ", "SCA風の目安では、濃度は良い範囲に入っています。"
+    else:
+        return "濃いめ", "SCA風の目安では、濃度が高めです。重さや苦味が出ていないか確認すると良さそうです。"
+
+
+def judge_sca_yield(extraction_yield):
+    if extraction_yield < 18:
+        return "未抽出寄り", "SCA風の目安では、成分の出方が少なめです。挽き目を細かくする、湯温を上げる、抽出時間を伸ばすなどが候補です。"
+    elif extraction_yield <= 22:
+        return "目安ゾーン", "SCA風の目安では、抽出収率は良い範囲に入っています。"
+    else:
+        return "過抽出寄り", "SCA風の目安では、成分が出すぎ寄りです。雑味や渋みがあるなら、挽き目を粗くする、抽出時間を短くするなどが候補です。"
 
 
 def rating_index(value):
@@ -212,7 +231,7 @@ st.set_page_config(
 
 
 # =========================
-# デザインCSS
+# CSS
 # =========================
 st.markdown("""
 <style>
@@ -220,7 +239,6 @@ st.markdown("""
     background:
         radial-gradient(circle at 8% 5%, rgba(255, 186, 105, 0.22), transparent 28%),
         radial-gradient(circle at 92% 12%, rgba(159, 89, 38, 0.22), transparent 32%),
-        radial-gradient(circle at 50% 100%, rgba(65, 36, 22, 0.72), transparent 45%),
         linear-gradient(135deg, #090604 0%, #160d08 35%, #28160d 70%, #0b0705 100%);
     color: #fff6ea;
 }
@@ -235,69 +253,21 @@ html, body, [class*="css"] {
     font-family: "Yu Gothic", "Hiragino Sans", "Meiryo", sans-serif;
 }
 
-p, span, div {
-    color: inherit;
-}
-
 h1, h2, h3 {
     color: #fff5e6 !important;
     font-weight: 950 !important;
-    letter-spacing: 0.02em;
-}
-
-h2 {
-    padding-top: 0.35rem;
-    padding-bottom: 0.15rem;
-    border-bottom: 1px solid rgba(255, 209, 160, 0.22);
-}
-
-h3 {
-    color: #ffd9a8 !important;
 }
 
 .hero-card {
-    position: relative;
-    overflow: hidden;
-    padding: 36px 40px;
-    border-radius: 36px;
-    background:
-        linear-gradient(135deg, rgba(255,255,255,0.18), rgba(255,255,255,0.045)),
-        linear-gradient(135deg, rgba(255, 181, 97, 0.10), rgba(80, 37, 17, 0.20));
-    border: 1px solid rgba(255, 226, 188, 0.26);
-    box-shadow:
-        0 22px 70px rgba(0,0,0,0.46),
-        inset 0 1px 0 rgba(255,255,255,0.18);
+    padding: 34px 38px;
+    border-radius: 32px;
+    background: linear-gradient(135deg, rgba(255,255,255,0.16), rgba(255,255,255,0.04));
+    border: 1px solid rgba(255, 226, 188, 0.25);
+    box-shadow: 0 22px 70px rgba(0,0,0,0.46);
     margin-bottom: 26px;
-    backdrop-filter: blur(16px);
-}
-
-.hero-card::before {
-    content: "";
-    position: absolute;
-    top: -80px;
-    right: -90px;
-    width: 260px;
-    height: 260px;
-    border-radius: 50%;
-    background: radial-gradient(circle, rgba(255, 193, 121, 0.35), transparent 65%);
-    filter: blur(4px);
-}
-
-.hero-card::after {
-    content: "";
-    position: absolute;
-    bottom: -95px;
-    left: -80px;
-    width: 260px;
-    height: 260px;
-    border-radius: 50%;
-    background: radial-gradient(circle, rgba(164, 91, 45, 0.30), transparent 65%);
-    filter: blur(4px);
 }
 
 .hero-label {
-    position: relative;
-    z-index: 2;
     display: inline-block;
     padding: 7px 12px;
     border-radius: 999px;
@@ -311,18 +281,13 @@ h3 {
 }
 
 .hero-title {
-    position: relative;
-    z-index: 2;
     font-size: clamp(34px, 4.4vw, 58px);
     font-weight: 1000;
     color: #fff2df;
     line-height: 1.08;
-    text-shadow: 0 8px 30px rgba(0,0,0,0.45);
 }
 
 .hero-subtitle {
-    position: relative;
-    z-index: 2;
     max-width: 850px;
     font-size: 16px;
     color: #f5d9ba;
@@ -336,14 +301,10 @@ h3 {
     gap: 14px;
     padding: 18px 20px;
     border-radius: 24px;
-    background:
-        linear-gradient(135deg, rgba(255,255,255,0.115), rgba(255,255,255,0.045));
+    background: linear-gradient(135deg, rgba(255,255,255,0.115), rgba(255,255,255,0.045));
     border: 1px solid rgba(255, 226, 188, 0.16);
-    box-shadow:
-        0 14px 38px rgba(0,0,0,0.26),
-        inset 0 1px 0 rgba(255,255,255,0.10);
+    box-shadow: 0 14px 38px rgba(0,0,0,0.26);
     margin: 18px 0 16px 0;
-    backdrop-filter: blur(12px);
 }
 
 .section-icon {
@@ -356,14 +317,12 @@ h3 {
     color: #1b0e06;
     font-size: 22px;
     font-weight: 1000;
-    box-shadow: 0 10px 24px rgba(255, 181, 97, 0.28);
 }
 
 .section-title {
     color: #fff2df;
     font-size: 19px;
     font-weight: 1000;
-    letter-spacing: 0.03em;
 }
 
 .section-subtitle {
@@ -373,16 +332,12 @@ h3 {
 }
 
 .lab-card, .condition-box {
-    background:
-        linear-gradient(135deg, rgba(255,255,255,0.105), rgba(255,255,255,0.045));
+    background: linear-gradient(135deg, rgba(255,255,255,0.105), rgba(255,255,255,0.045));
     border: 1px solid rgba(255, 226, 188, 0.17);
     border-radius: 24px;
     padding: 20px 22px;
-    box-shadow:
-        0 16px 42px rgba(0,0,0,0.30),
-        inset 0 1px 0 rgba(255,255,255,0.10);
+    box-shadow: 0 16px 42px rgba(0,0,0,0.30);
     margin-bottom: 18px;
-    backdrop-filter: blur(12px);
 }
 
 .lab-card-title, .condition-title {
@@ -390,7 +345,6 @@ h3 {
     font-weight: 950;
     font-size: 17px;
     margin-bottom: 9px;
-    letter-spacing: 0.02em;
 }
 
 .lab-card-body, .condition-text {
@@ -400,8 +354,7 @@ h3 {
 }
 
 .danger-card {
-    background:
-        linear-gradient(135deg, rgba(150, 32, 22, 0.38), rgba(76, 18, 13, 0.24));
+    background: linear-gradient(135deg, rgba(150, 32, 22, 0.38), rgba(76, 18, 13, 0.24));
     border: 1px solid rgba(255, 125, 95, 0.42);
     border-radius: 24px;
     padding: 20px 22px;
@@ -409,57 +362,9 @@ h3 {
     margin-top: 22px;
 }
 
-.stTabs [data-baseweb="tab-list"] {
-    gap: 12px;
-    background:
-        linear-gradient(135deg, rgba(255,255,255,0.09), rgba(255,255,255,0.04));
-    padding: 10px;
-    border-radius: 22px;
-    border: 1px solid rgba(255, 226, 188, 0.14);
-    box-shadow: 0 12px 34px rgba(0,0,0,0.22);
-}
-
-.stTabs [data-baseweb="tab"] {
-    height: 52px;
-    padding: 0 24px;
-    border-radius: 16px;
-    color: #f0cdaa;
-    background: rgba(255,255,255,0.055);
-    font-weight: 900;
-    letter-spacing: 0.01em;
-    transition: all 0.15s ease-in-out;
-}
-
-.stTabs [data-baseweb="tab"]:hover {
-    background: rgba(255, 193, 121, 0.13);
-    color: #ffe5c8;
-}
-
-.stTabs [aria-selected="true"] {
-    background: linear-gradient(135deg, #d18440, #ffc57e) !important;
-    color: #1b0e06 !important;
-    box-shadow:
-        0 10px 28px rgba(255, 181, 97, 0.30),
-        inset 0 1px 0 rgba(255,255,255,0.35);
-}
-
 label {
     color: #ffe7c9 !important;
     font-weight: 900 !important;
-    letter-spacing: 0.01em;
-}
-
-.stTextInput,
-.stNumberInput,
-.stTextArea,
-.stSelectbox {
-    background:
-        linear-gradient(135deg, rgba(255,255,255,0.075), rgba(255,255,255,0.032));
-    border: 1px solid rgba(255, 226, 188, 0.10);
-    border-radius: 18px;
-    padding: 12px 14px 14px 14px;
-    margin-bottom: 10px;
-    box-shadow: 0 8px 22px rgba(0,0,0,0.16);
 }
 
 .stTextInput input,
@@ -467,84 +372,32 @@ label {
 .stTextArea textarea {
     background: rgba(255, 250, 242, 0.98) !important;
     color: #241205 !important;
-    border-radius: 15px !important;
-    border: 1px solid rgba(255, 210, 160, 0.78) !important;
-    box-shadow:
-        0 8px 20px rgba(0,0,0,0.15),
-        inset 0 1px 0 rgba(255,255,255,0.85);
-}
-
-.stTextInput input:focus,
-.stNumberInput input:focus,
-.stTextArea textarea:focus {
-    border: 1px solid #ffbd74 !important;
-    box-shadow:
-        0 0 0 3px rgba(255, 189, 116, 0.24),
-        0 8px 20px rgba(0,0,0,0.15);
-}
-
-.stTextArea textarea {
-    min-height: 96px;
+    border-radius: 12px !important;
 }
 
 .stSelectbox div[data-baseweb="select"] > div {
     background: rgba(255, 250, 242, 0.98) !important;
     color: #241205 !important;
-    border-radius: 15px !important;
-    border: 1px solid rgba(255, 210, 160, 0.78) !important;
-    box-shadow:
-        0 8px 20px rgba(0,0,0,0.15),
-        inset 0 1px 0 rgba(255,255,255,0.85);
+    border-radius: 12px !important;
 }
 
 .stButton > button,
 .stFormSubmitButton > button {
     width: 100%;
-    border: 2px solid rgba(255, 229, 190, 0.98) !important;
-    border-radius: 18px !important;
-    padding: 0.92rem 1.25rem !important;
-    background:
-        linear-gradient(135deg, #ffad5f 0%, #ffd18b 55%, #ffbd70 100%) !important;
+    border-radius: 16px !important;
+    padding: 0.85rem 1.15rem !important;
+    background: linear-gradient(135deg, #ffad5f 0%, #ffd18b 55%, #ffbd70 100%) !important;
     color: #241005 !important;
     font-weight: 1000 !important;
     font-size: 16px !important;
-    letter-spacing: 0.02em;
-    opacity: 1 !important;
-    box-shadow:
-        0 12px 32px rgba(255, 172, 95, 0.34),
-        inset 0 1px 0 rgba(255,255,255,0.45);
-    transition: all 0.15s ease-in-out;
-}
-
-.stButton > button p,
-.stFormSubmitButton > button p {
-    color: #241005 !important;
-    font-weight: 1000 !important;
-    opacity: 1 !important;
-}
-
-.stButton > button:hover,
-.stFormSubmitButton > button:hover {
-    transform: translateY(-2px);
-    background:
-        linear-gradient(135deg, #ffc07b 0%, #ffe0ad 55%, #ffc885 100%) !important;
-    box-shadow:
-        0 16px 42px rgba(255, 192, 120, 0.48),
-        inset 0 1px 0 rgba(255,255,255,0.55);
-    border-color: #fff2d8 !important;
-    color: #241005 !important;
 }
 
 [data-testid="stMetric"] {
-    background:
-        linear-gradient(135deg, rgba(255,255,255,0.12), rgba(255,255,255,0.045));
+    background: linear-gradient(135deg, rgba(255,255,255,0.12), rgba(255,255,255,0.045));
     border: 1px solid rgba(255, 226, 188, 0.16);
     padding: 20px;
     border-radius: 24px;
-    box-shadow:
-        0 16px 42px rgba(0,0,0,0.30),
-        inset 0 1px 0 rgba(255,255,255,0.10);
-    backdrop-filter: blur(12px);
+    box-shadow: 0 16px 42px rgba(0,0,0,0.30);
 }
 
 [data-testid="stMetricLabel"] {
@@ -555,34 +408,20 @@ label {
 [data-testid="stMetricValue"] {
     color: #fff6ea !important;
     font-weight: 1000;
-    text-shadow: 0 3px 14px rgba(0,0,0,0.30);
-}
-
-.stAlert {
-    border-radius: 20px;
-    border: 1px solid rgba(255,255,255,0.16);
-    box-shadow: 0 12px 34px rgba(0,0,0,0.22);
 }
 
 [data-testid="stDataFrame"] {
-    border-radius: 22px;
+    border-radius: 18px;
     overflow: hidden;
-    box-shadow:
-        0 18px 48px rgba(0,0,0,0.34),
-        inset 0 1px 0 rgba(255,255,255,0.08);
-    border: 1px solid rgba(255, 226, 188, 0.14);
 }
 
 .chart-shell {
-    background:
-        linear-gradient(135deg, rgba(255,255,255,0.11), rgba(255,255,255,0.04));
+    background: linear-gradient(135deg, rgba(255,255,255,0.11), rgba(255,255,255,0.04));
     border: 1px solid rgba(255, 226, 188, 0.17);
     border-radius: 26px;
     padding: 18px;
     margin-bottom: 26px;
-    box-shadow:
-        0 18px 50px rgba(0,0,0,0.32),
-        inset 0 1px 0 rgba(255,255,255,0.08);
+    box-shadow: 0 18px 50px rgba(0,0,0,0.32);
 }
 
 .chart-label {
@@ -590,85 +429,12 @@ label {
     font-weight: 1000;
     font-size: 17px;
     margin-bottom: 8px;
-    letter-spacing: 0.02em;
 }
 
 .chart-caption {
     color: #f0cdaa;
     font-size: 13px;
     margin-bottom: 12px;
-}
-
-.stSlider {
-    background:
-        linear-gradient(135deg, rgba(255,255,255,0.085), rgba(255,255,255,0.04));
-    padding: 13px 16px;
-    border-radius: 18px;
-    margin-bottom: 12px;
-    border: 1px solid rgba(255, 226, 188, 0.10);
-    box-shadow: 0 8px 22px rgba(0,0,0,0.18);
-}
-
-[data-testid="stCaptionContainer"] {
-    color: #f4c88e !important;
-    font-weight: 650;
-}
-
-hr {
-    border-color: rgba(255, 226, 188, 0.16);
-    margin-top: 1.6rem;
-    margin-bottom: 1.6rem;
-}
-
-.stCheckbox {
-    background: rgba(255,255,255,0.065);
-    padding: 10px 14px;
-    border-radius: 16px;
-    border: 1px solid rgba(255, 226, 188, 0.11);
-}
-
-::-webkit-scrollbar {
-    width: 10px;
-    height: 10px;
-}
-
-::-webkit-scrollbar-track {
-    background: #120905;
-}
-
-::-webkit-scrollbar-thumb {
-    background: linear-gradient(135deg, #9b5a2e, #e1a15c);
-    border-radius: 999px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-    background: linear-gradient(135deg, #b96b36, #ffc078);
-}
-
-@media (max-width: 768px) {
-    .block-container {
-        padding-top: 1rem;
-        padding-left: 1rem;
-        padding-right: 1rem;
-    }
-
-    .hero-card {
-        padding: 24px 22px;
-        border-radius: 26px;
-    }
-
-    .hero-title {
-        font-size: 34px;
-    }
-
-    .hero-subtitle {
-        font-size: 14px;
-    }
-
-    .stTabs [data-baseweb="tab"] {
-        padding: 0 14px;
-        font-size: 13px;
-    }
 }
 </style>
 """, unsafe_allow_html=True)
@@ -683,7 +449,7 @@ st.markdown("""
     <div class="hero-title">☕ 浅煎りコーヒー研究ログ</div>
     <div class="hero-subtitle">
         TDS 1.25%前後を安定して出すための実験記録アプリ。
-        条件登録、結果入力、データ分析までGoogleスプレッドシートに同期。
+        条件登録、結果入力、データ分析、SCA風チャートまでGoogleスプレッドシートに同期。
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -1021,7 +787,7 @@ with tab2:
 
         water_weight_for_check = safe_float(target["湯量g"], 0)
         if water_weight_for_check > 0 and beverage_weight > water_weight_for_check:
-            validation_warnings.append("抽出液量が湯量より大きくなっています。入力値を確認してください。")
+            validation_warnings.append("抽出液量が湯量より大きくなっています。アイスの場合は氷が溶けた分まで入っていないか確認してください。")
 
         confirm_warning_save = True
         if validation_warnings:
@@ -1118,6 +884,117 @@ with tab3:
                 width="stretch"
             )
 
+        # =========================
+        # SCA風チャート
+        # =========================
+        section_header("🧭", "SCA風 ブリューイングコントロールチャート", "TDSと抽出収率から、薄い・濃い・未抽出・過抽出を確認")
+
+        if valid_df.empty:
+            st.info("TDS% と 抽出収率% が入力されると、SCA風チャートが表示されます。")
+        else:
+            st.markdown("""
+            <div class="lab-card">
+                <div class="lab-card-title">SCA風チャートの見方</div>
+                <div class="lab-card-body">
+                    横軸は抽出収率%、縦軸はTDS%です。<br>
+                    目安として、TDS 1.15〜1.35%、抽出収率 18〜22% の範囲を表示しています。<br>
+                    ただし、浅煎り・アイス・好みによって理想値は変わるので、味評価とセットで見てください。
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            sca_df = valid_df.copy()
+
+            fig, ax = plt.subplots(figsize=(8, 6))
+
+            ax.axvspan(18, 22, alpha=0.12, label="抽出収率の目安 18〜22%")
+            ax.axhspan(1.15, 1.35, alpha=0.12, label="TDSの目安 1.15〜1.35%")
+
+            ideal_box = plt.Rectangle(
+                (18, 1.15),
+                4,
+                0.20,
+                fill=False,
+                linewidth=2
+            )
+            ax.add_patch(ideal_box)
+
+            ax.scatter(
+                sca_df["抽出収率%"],
+                sca_df["TDS%"],
+                s=90
+            )
+
+            for _, row in sca_df.iterrows():
+                ax.text(
+                    row["抽出収率%"] + 0.08,
+                    row["TDS%"] + 0.01,
+                    f"No.{int(row['実験No'])}",
+                    fontsize=9
+                )
+
+            ax.set_xlabel("抽出収率 %")
+            ax.set_ylabel("TDS %")
+            ax.set_title("SCA風 ブリューイングコントロールチャート")
+
+            x_min = min(10, sca_df["抽出収率%"].min() - 1)
+            x_max = max(24, sca_df["抽出収率%"].max() + 1)
+            y_min = min(0.6, sca_df["TDS%"].min() - 0.1)
+            y_max = max(1.8, sca_df["TDS%"].max() + 0.1)
+
+            ax.set_xlim(x_min, x_max)
+            ax.set_ylim(y_min, y_max)
+
+            ax.grid(True)
+            ax.legend()
+
+            st.pyplot(fig)
+            st.caption("※SCA風チャートは一般的な目安です。浅煎り、アイス、好みによって理想値は変わります。味の評価とセットで見てください。")
+
+            latest_sca = sca_df.sort_values("実験No").iloc[-1]
+
+            latest_no = int(latest_sca["実験No"])
+            latest_tds_for_sca = safe_float(latest_sca["TDS%"])
+            latest_yield_for_sca = safe_float(latest_sca["抽出収率%"])
+
+            sca_tds_label, sca_tds_comment = judge_sca_tds(latest_tds_for_sca)
+            sca_yield_label, sca_yield_comment = judge_sca_yield(latest_yield_for_sca)
+
+            sca_col1, sca_col2 = st.columns(2)
+
+            with sca_col1:
+                st.metric("最新TDSのSCA風判定", sca_tds_label)
+                st.write(sca_tds_comment)
+
+            with sca_col2:
+                st.metric("最新抽出収率のSCA風判定", sca_yield_label)
+                st.write(sca_yield_comment)
+
+            if latest_tds_for_sca < 1.15 and latest_yield_for_sca < 18:
+                sca_next = "薄く、成分も出きっていない可能性があります。次回は挽き目を少し細かくする、湯温を上げる、抽出時間を長くするなどが候補です。"
+            elif latest_tds_for_sca < 1.15 and latest_yield_for_sca >= 18:
+                sca_next = "抽出はできていますが濃度が低めです。豆量を増やすか、湯量を少し減らすと濃さを上げやすいです。"
+            elif latest_tds_for_sca > 1.35 and latest_yield_for_sca > 22:
+                sca_next = "濃く、出すぎの可能性があります。挽き目を粗くする、湯温を少し下げる、抽出時間を短くするなどが候補です。"
+            elif 1.15 <= latest_tds_for_sca <= 1.35 and 18 <= latest_yield_for_sca <= 22:
+                sca_next = "SCA風の目安ゾーンに入っています。大きく変えず、味評価を見ながら微調整するのが良さそうです。"
+            else:
+                sca_next = "SCA風の目安からは少し外れています。TDSと抽出収率のどちらを優先して改善するか、味評価と合わせて判断すると良さそうです。"
+
+            st.markdown(f"""
+            <div class="lab-card">
+                <div class="lab-card-title">最新実験 No.{latest_no} のSCA風まとめ</div>
+                <div class="lab-card-body">
+                    TDS：{latest_tds_for_sca:.2f}% → {esc(sca_tds_label)}<br>
+                    抽出収率：{latest_yield_for_sca:.2f}% → {esc(sca_yield_label)}<br><br>
+                    {esc(sca_next)}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        # =========================
+        # TDS推移
+        # =========================
         section_header("📈", "TDSの推移", "標準グラフでシンプルに表示")
 
         if valid_df.empty:
@@ -1125,6 +1002,9 @@ with tab3:
         else:
             st.line_chart(valid_df.set_index("実験No")["TDS%"])
 
+        # =========================
+        # 抽出収率推移
+        # =========================
         section_header("⚖️", "抽出収率の推移", "標準グラフでシンプルに表示")
 
         if valid_df.empty:
@@ -1132,6 +1012,9 @@ with tab3:
         else:
             st.line_chart(valid_df.set_index("実験No")["抽出収率%"])
 
+        # =========================
+        # 目標TDSランキング
+        # =========================
         section_header("🏆", "目標TDS 1.25%に近い順", "再現したい条件を探すランキング")
 
         if valid_df.empty:
@@ -1163,6 +1046,9 @@ with tab3:
             </div>
             """, unsafe_allow_html=True)
 
+        # =========================
+        # 成功レシピ候補
+        # =========================
         section_header("🌟", "成功レシピ候補", "TDS・抽出収率・味評価から良いレシピを抽出")
 
         if valid_df.empty:
@@ -1207,6 +1093,9 @@ with tab3:
                 </div>
                 """, unsafe_allow_html=True)
 
+        # =========================
+        # 豆ごとの分析
+        # =========================
         section_header("☕", "豆ごとの分析", "豆の種類ごとに平均値を比較")
 
         if valid_df.empty:
@@ -1230,6 +1119,9 @@ with tab3:
 
             st.dataframe(bean_analysis.round(2), width="stretch")
 
+        # =========================
+        # 焙煎後日数ごとの味変化
+        # =========================
         section_header("🌱", "焙煎後日数ごとの味変化", "香り・甘味・雑味の変化を追う")
 
         flavor_cols = ["酸味", "甘味", "苦味", "雑味", "香り", "飲みやすさ"]
@@ -1253,6 +1145,9 @@ with tab3:
             st.line_chart(flavor_by_days)
             st.caption("焙煎後日数ごとに、酸味・甘味・雑味・香りなどの平均変化を確認できます。")
 
+        # =========================
+        # 挽き目ごとの平均TDS
+        # =========================
         section_header("🌀", "挽き目ごとの平均TDS", "挽き目と濃度の関係を見る")
 
         grind_df = valid_df.copy()
@@ -1285,6 +1180,9 @@ with tab3:
             if not chart_grind["平均TDS"].dropna().empty:
                 st.bar_chart(chart_grind.set_index("挽き目")["平均TDS"])
 
+        # =========================
+        # 雑味検出
+        # =========================
         section_header("⚠️", "雑味が強く出た条件の検出", "雑味4以上の実験を自動抽出")
 
         off_df = graph_df.copy()
@@ -1315,6 +1213,9 @@ with tab3:
             </div>
             """, unsafe_allow_html=True)
 
+        # =========================
+        # 次回条件提案
+        # =========================
         section_header("🧭", "今日の結果から次回条件を提案", "最新実験から次に変えるべき条件を提案")
 
         if valid_df.empty:
