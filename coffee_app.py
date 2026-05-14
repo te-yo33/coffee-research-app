@@ -426,8 +426,7 @@ st.markdown("""
     <div class="hero-label">LIGHT ROAST COFFEE LAB</div>
     <div class="hero-title">☕ 浅煎りコーヒー研究ログ</div>
     <div class="hero-subtitle">
-        TDS 1.25%前後を安定して出すための実験記録アプリ。
-        条件登録、結果入力、データ分析、SCA風チャートまでGoogleスプレッドシートに同期。
+        条件登録、結果入力、ワード検索、SCA風チャート、データ分析までGoogleスプレッドシートに同期。
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -812,9 +811,6 @@ with tab3:
 
     df = load_data()
 
-    section_header("📊", "実験ログ一覧", "Googleスプレッドシートに保存された全データ")
-    st.dataframe(df, width="stretch")
-
     if df.empty:
         st.info("まだ実験データがありません。")
     else:
@@ -824,7 +820,7 @@ with tab3:
             "実験No", "焙煎度", "豆量g", "湯量g", "湯温℃",
             "抽出液量g", "抽出時間秒", "TDS%", "抽出収率%",
             "酸味", "甘味", "苦味", "雑味", "香り", "飲みやすさ",
-            "焙煎後日数", "開封後日数"
+            "焙煎後日数", "開封後日数", "挽き目"
         ]
 
         for col in numeric_cols:
@@ -833,6 +829,50 @@ with tab3:
 
         graph_df = graph_df.dropna(subset=["実験No"])
         valid_df = graph_df.dropna(subset=["TDS%", "抽出収率%"]).copy()
+
+        # =========================
+        # ワード検索
+        # =========================
+        section_header("🔍", "実験ログ検索", "キーワードで過去の実験データを呼び出す")
+
+        search_word = st.text_input(
+            "検索ワード",
+            value="",
+            placeholder="例）Brazil、アイス、薄い、雑味、カリタ、一刀入れ、ぬるい"
+        )
+
+        search_df = df.copy()
+
+        if search_word:
+            search_cols = HEADERS
+            keyword_mask = pd.Series(False, index=search_df.index)
+
+            for col in search_cols:
+                if col in search_df.columns:
+                    keyword_mask = keyword_mask | search_df[col].astype(str).str.contains(
+                        search_word,
+                        case=False,
+                        na=False
+                    )
+
+            search_df = search_df[keyword_mask]
+
+        st.write(f"検索結果：{len(search_df)} 件")
+        st.dataframe(search_df, width="stretch")
+
+        if search_word and search_df.empty:
+            st.info("このワードに一致する実験はありませんでした。別の言葉で検索してみてください。")
+
+        if search_word and not search_df.empty:
+            st.markdown("""
+            <div class="lab-card">
+                <div class="lab-card-title">検索結果の見方</div>
+                <div class="lab-card-body">
+                    入力したワードが、豆の種類・ドリッパー・フィルター・煎れ方・煎れ方メモ・コメント・数値項目などのどこかに含まれる実験を表示しています。
+                    たとえば「薄い」「アイス」「Brazil」「カリタ」などで、過去の実験をすぐ呼び出せます。
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
 
         # =========================
         # 測定ステータス
@@ -1023,53 +1063,6 @@ with tab3:
                 </div>
             </div>
             """, unsafe_allow_html=True)
-
-        # =========================
-        # 成功レシピ候補
-        # =========================
-        section_header("🌟", "成功レシピ候補", "TDS・抽出収率・味評価から良いレシピを抽出")
-
-        if valid_df.empty:
-            st.info("TDSと抽出収率が入力されると、成功レシピ候補が表示されます。")
-        else:
-            success_df = valid_df[
-                (valid_df["TDS%"] >= 1.20) &
-                (valid_df["TDS%"] <= 1.30) &
-                (valid_df["抽出収率%"] >= 18) &
-                (valid_df["抽出収率%"] <= 22) &
-                (valid_df["雑味"] <= 2) &
-                (valid_df["飲みやすさ"] >= 4)
-            ].copy()
-
-            if success_df.empty:
-                st.info("まだ成功レシピ候補はありません。条件は「TDS 1.20〜1.30、抽出収率18〜22、雑味2以下、飲みやすさ4以上」です。")
-            else:
-                success_df["目標との差"] = (success_df["TDS%"] - 1.25).abs()
-                success_df = success_df.sort_values(["目標との差", "飲みやすさ", "雑味"], ascending=[True, False, True])
-
-                st.success(f"成功レシピ候補が {len(success_df)} 件見つかりました。")
-
-                success_cols = [
-                    "実験No", "豆の種類", "焙煎度", "挽き目",
-                    "ドリッパー", "フィルター", "煎れ方",
-                    "TDS%", "抽出収率%", "雑味", "飲みやすさ", "コメント"
-                ]
-
-                st.dataframe(success_df[success_cols], width="stretch")
-
-                top_success = success_df.iloc[0]
-
-                st.markdown(f"""
-                <div class="lab-card">
-                    <div class="lab-card-title">今いちばん再現したい成功レシピ</div>
-                    <div class="lab-card-body">
-                        実験No.{int(top_success["実験No"])} が、現時点で最も良い成功レシピ候補です。<br>
-                        TDS：{top_success["TDS%"]:.2f}% ／ 抽出収率：{top_success["抽出収率%"]:.2f}% ／ 雑味：{top_success["雑味"]:.0f} ／ 飲みやすさ：{top_success["飲みやすさ"]:.0f}<br>
-                        豆：{esc(top_success["豆の種類"])} ／ 焙煎度：{esc(top_success["焙煎度"])} ／ 挽き目：{esc(top_success["挽き目"])}<br>
-                        ドリッパー：{esc(top_success["ドリッパー"])} ／ フィルター：{esc(top_success["フィルター"])} ／ 煎れ方：{esc(top_success["煎れ方"])}
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
 
         # =========================
         # 豆ごとの分析
