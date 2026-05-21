@@ -1,1435 +1,642 @@
-import streamlit as st
-import pandas as pd
-import matplotlib.pyplot as plt
-import html
-from datetime import datetime
+import os
+import uuid
+from datetime import date, datetime
 
-import gspread
-from google.oauth2.service_account import Credentials
+import pandas as pd
+import streamlit as st
 
 
 # =========================
 # 基本設定
 # =========================
-HEADERS = [
-    "実験No", "日付",
-    "豆の種類", "焙煎度", "豆量g", "湯量g", "湯温℃",
-    "挽き目", "ドリッパー", "フィルター", "煎れ方", "煎れ方メモ",
-    "蒸らし有無", "蒸らし時間秒", "蒸らし湯量g",
-    "焙煎後日数", "開封後日数",
-    "抽出液量g", "抽出時間秒", "TDS%", "抽出収率%",
-    "酸味", "甘味", "苦味", "雑味", "香り", "飲みやすさ", "コメント"
+st.set_page_config(
+    page_title="Roast & Brew Lab",
+    page_icon="☕",
+    layout="wide",
+)
+
+DATA_DIR = "data"
+BEANS_FILE = os.path.join(DATA_DIR, "beans.csv")
+ROASTS_FILE = os.path.join(DATA_DIR, "roasts.csv")
+BREWS_FILE = os.path.join(DATA_DIR, "brews.csv")
+
+os.makedirs(DATA_DIR, exist_ok=True)
+
+
+# =========================
+# CSVの列定義
+# =========================
+BEANS_COLUMNS = [
+    "bean_id",
+    "bean_name",
+    "origin",
+    "variety",
+    "process",
+    "memo",
+    "created_at",
 ]
 
-ROAST_NAMES = {
-    1: "かなり浅煎り",
-    2: "浅煎り",
-    3: "浅煎り寄り",
-    4: "中浅煎り",
-    5: "中煎り寄り",
-    6: "中深煎り",
-    7: "深煎り",
-    8: "かなり深煎り"
-}
+ROASTS_COLUMNS = [
+    "roast_id",
+    "bean_id",
+    "bean_name",
+    "roast_date",
+    "green_weight_g",
+    "roasted_weight_g",
+    "weight_loss_percent",
+    "roaster",
+    "roast_speed",
+    "charge_temp_c",
+    "total_roast_time_sec",
+    "first_crack_start_sec",
+    "development_time_sec",
+    "drop_temp_c",
+    "roast_level_8",
+    "agtron_value",
+    "bean_color_score",
+    "roast_color_hex",
+    "unevenness_score",
+    "roast_aroma_score",
+    "roast_memo",
+    "created_at",
+]
 
-SCOPES = [
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive"
+BREWS_COLUMNS = [
+    "brew_id",
+    "roast_id",
+    "bean_name",
+    "brew_date",
+    "days_after_roast",
+    "dripper",
+    "filter_type",
+    "grind_size",
+    "dose_g",
+    "water_g",
+    "brew_ratio",
+    "water_temp_c",
+    "brew_time_sec",
+    "beverage_g",
+    "tds_percent",
+    "extraction_yield_percent",
+    "acidity_score",
+    "sweetness_score",
+    "bitterness_score",
+    "aroma_score",
+    "body_score",
+    "aftertaste_score",
+    "misc_score",
+    "overall_score",
+    "brew_memo",
+    "created_at",
 ]
 
 
 # =========================
 # 共通関数
 # =========================
-def esc(value):
-    return html.escape(str(value))
+def load_csv(path: str, columns: list[str]) -> pd.DataFrame:
+    if os.path.exists(path):
+        df = pd.read_csv(path)
+        for col in columns:
+            if col not in df.columns:
+                df[col] = ""
+        return df[columns]
+    return pd.DataFrame(columns=columns)
 
 
-def safe_float(value, default=0.0):
+def save_csv(df: pd.DataFrame, path: str) -> None:
+    df.to_csv(path, index=False, encoding="utf-8-sig")
+
+
+def make_id(prefix: str) -> str:
+    today = datetime.now().strftime("%Y%m%d")
+    short = uuid.uuid4().hex[:6].upper()
+    return f"{prefix}-{today}-{short}"
+
+
+def safe_float(value, default=0.0) -> float:
     try:
-        if value == "" or value is None:
+        if value == "" or pd.isna(value):
             return default
         return float(value)
     except Exception:
         return default
 
 
-def safe_int(value, default=0):
+def safe_int(value, default=0) -> int:
     try:
-        if value == "" or value is None:
+        if value == "" or pd.isna(value):
             return default
-        return int(float(value))
+        return int(value)
     except Exception:
         return default
 
 
-def calc_yield(tds, beverage_weight, coffee_weight):
-    if coffee_weight == 0:
-        return 0
-    return round(tds * beverage_weight / coffee_weight, 2)
+def sec_to_minsec(seconds: int) -> str:
+    seconds = safe_int(seconds)
+    m = seconds // 60
+    s = seconds % 60
+    return f"{m}:{s:02d}"
 
 
-def calc_yield_from_text(tds_text, beverage_text, coffee_text, current_value=""):
-    tds = safe_float(tds_text, None)
-    beverage = safe_float(beverage_text, None)
-    coffee = safe_float(coffee_text, None)
-
-    if tds is None or beverage is None or coffee is None or coffee == 0:
-        return current_value
-
-    return round(tds * beverage / coffee, 2)
+def calc_weight_loss(green_g: float, roasted_g: float) -> float:
+    if green_g <= 0 or roasted_g <= 0:
+        return 0.0
+    return round((green_g - roasted_g) / green_g * 100, 2)
 
 
-def judge_tds(tds):
-    if tds < 1.20:
-        return "薄め", "TDSは目標より薄めです。次回は挽き目を少し細かくする、抽出時間を伸ばすなどが候補です。"
-    elif tds > 1.30:
-        return "濃いめ", "TDSは目標より濃いめです。次回は挽き目を少し粗くする、抽出時間を短くするなどが候補です。"
-    else:
-        return "良好", "TDSは1.25%前後でかなり良い範囲です。"
+def calc_brew_ratio(water_g: float, dose_g: float) -> float:
+    if dose_g <= 0 or water_g <= 0:
+        return 0.0
+    return round(water_g / dose_g, 2)
 
 
-def judge_yield(extraction_yield):
-    if extraction_yield < 18:
-        return "抽出不足気味"
-    elif extraction_yield <= 22:
-        return "適正範囲"
-    else:
-        return "過抽出気味"
+def calc_extraction_yield(beverage_g: float, tds_percent: float, dose_g: float) -> float:
+    if beverage_g <= 0 or tds_percent <= 0 or dose_g <= 0:
+        return 0.0
+    return round(beverage_g * (tds_percent / 100) / dose_g * 100, 2)
 
 
-def judge_sca_tds(tds):
-    if tds < 1.15:
-        return "薄め", "SCA風の目安では、濃度が低めです。アイスや浅煎りでは低めでも飲みやすい場合があります。"
-    elif tds <= 1.35:
-        return "標準的な濃さ", "SCA風の目安では、濃度は良い範囲に入っています。"
-    else:
-        return "濃いめ", "SCA風の目安では、濃度が高めです。苦味や重さが出ていないか確認すると良さそうです。"
-
-
-def judge_sca_yield(extraction_yield):
-    if extraction_yield < 18:
-        return "未抽出寄り", "SCA風の目安では、成分の出方が少なめです。挽き目を細かくする、湯温を上げる、抽出時間を伸ばすなどが候補です。"
-    elif extraction_yield <= 22:
-        return "目安ゾーン", "SCA風の目安では、抽出収率は良い範囲に入っています。"
-    else:
-        return "過抽出寄り", "SCA風の目安では、成分が出すぎ寄りです。雑味や渋みがあるなら、挽き目を粗くする、抽出時間を短くするなどが候補です。"
-
-
-def rating_index(value):
-    options = ["", "1", "2", "3", "4", "5"]
-    value = str(value)
-    if value in options:
-        return options.index(value)
-    return 0
-
-
-def next_experiment_no(df):
-    if df.empty:
-        return 1
-
-    exp_no = pd.to_numeric(df["実験No"], errors="coerce")
-
-    if exp_no.dropna().empty:
-        return 1
-
-    return int(exp_no.max()) + 1
-
-
-def section_header(icon, title, subtitle=""):
-    st.markdown(f"""
-    <div class="section-head">
-        <div class="section-icon">{icon}</div>
-        <div>
-            <div class="section-title">{title}</div>
-            <div class="section-subtitle">{subtitle}</div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+def get_roast_label(row: pd.Series) -> str:
+    roast_date = row.get("roast_date", "")
+    bean_name = row.get("bean_name", "")
+    speed = row.get("roast_speed", "")
+    agtron = row.get("agtron_value", "")
+    roast_id = row.get("roast_id", "")
+    return f"{roast_id} / {bean_name} / {roast_date} / {speed} / Agtron {agtron}"
 
 
 # =========================
-# Google Sheets 接続
+# データ読み込み
 # =========================
-@st.cache_resource
-def get_worksheet():
-    try:
-        creds_dict = dict(st.secrets["gcp_service_account"])
-        spreadsheet_id = st.secrets["SPREADSHEET_ID"]
-
-        creds = Credentials.from_service_account_info(
-            creds_dict,
-            scopes=SCOPES
-        )
-
-        client = gspread.authorize(creds)
-        spreadsheet = client.open_by_key(spreadsheet_id)
-        worksheet = spreadsheet.sheet1
-
-        return worksheet
-
-    except Exception as e:
-        st.error("Googleスプレッドシートへの接続に失敗しました。")
-        st.write("Secretsの設定、スプレッドシートID、サービスアカウント共有を確認してください。")
-        st.exception(e)
-        st.stop()
-
-
-def load_data():
-    worksheet = get_worksheet()
-    values = worksheet.get_all_values()
-
-    if not values:
-        worksheet.update(values=[HEADERS], range_name="A1")
-        return pd.DataFrame(columns=HEADERS).astype("object")
-
-    sheet_headers = values[0]
-    rows = values[1:]
-
-    if len(sheet_headers) == 0:
-        worksheet.update(values=[HEADERS], range_name="A1")
-        return pd.DataFrame(columns=HEADERS).astype("object")
-
-    df = pd.DataFrame(rows, columns=sheet_headers)
-
-    for col in HEADERS:
-        if col not in df.columns:
-            df[col] = ""
-
-    df = df[HEADERS]
-    df = df.fillna("").astype("object")
-
-    return df
-
-
-def save_data(df):
-    worksheet = get_worksheet()
-
-    df = df.copy()
-
-    for col in HEADERS:
-        if col not in df.columns:
-            df[col] = ""
-
-    df = df[HEADERS]
-    df = df.fillna("").astype(str)
-
-    rows = [HEADERS] + df.values.tolist()
-
-    worksheet.clear()
-    worksheet.update(values=rows, range_name="A1")
+beans_df = load_csv(BEANS_FILE, BEANS_COLUMNS)
+roasts_df = load_csv(ROASTS_FILE, ROASTS_COLUMNS)
+brews_df = load_csv(BREWS_FILE, BREWS_COLUMNS)
 
 
 # =========================
-# ページ設定
+# サイドバー
 # =========================
-st.set_page_config(
-    page_title="浅煎りコーヒー研究ログ",
-    page_icon="☕",
-    layout="wide"
+st.sidebar.title("☕ Roast & Brew Lab")
+st.sidebar.write("焙煎ログと抽出ログをつなげて、味の変化を研究するアプリです。")
+
+page = st.sidebar.radio(
+    "ページ選択",
+    [
+        "ホーム",
+        "豆マスタ登録",
+        "焙煎ログ登録",
+        "抽出ログ登録",
+        "分析",
+        "データ一覧・検索",
+    ],
 )
 
-
-# =========================
-# CSS
-# =========================
-st.markdown("""
-<style>
-.stApp {
-    background:
-        radial-gradient(circle at 8% 5%, rgba(255, 186, 105, 0.22), transparent 28%),
-        radial-gradient(circle at 92% 12%, rgba(159, 89, 38, 0.22), transparent 32%),
-        linear-gradient(135deg, #090604 0%, #160d08 35%, #28160d 70%, #0b0705 100%);
-    color: #fff6ea;
-}
-
-.block-container {
-    padding-top: 2rem;
-    padding-bottom: 4rem;
-    max-width: 1240px;
-}
-
-html, body, [class*="css"] {
-    font-family: "Yu Gothic", "Hiragino Sans", "Meiryo", sans-serif;
-}
-
-h1, h2, h3 {
-    color: #fff5e6 !important;
-    font-weight: 950 !important;
-}
-
-.hero-card {
-    padding: 34px 38px;
-    border-radius: 32px;
-    background: linear-gradient(135deg, rgba(255,255,255,0.16), rgba(255,255,255,0.04));
-    border: 1px solid rgba(255, 226, 188, 0.25);
-    box-shadow: 0 22px 70px rgba(0,0,0,0.46);
-    margin-bottom: 26px;
-}
-
-.hero-label {
-    display: inline-block;
-    padding: 7px 12px;
-    border-radius: 999px;
-    background: rgba(255, 193, 121, 0.12);
-    border: 1px solid rgba(255, 193, 121, 0.30);
-    font-size: 12px;
-    letter-spacing: 0.24em;
-    color: #ffc27b;
-    font-weight: 950;
-    margin-bottom: 14px;
-}
-
-.hero-title {
-    font-size: clamp(34px, 4.4vw, 58px);
-    font-weight: 1000;
-    color: #fff2df;
-    line-height: 1.08;
-}
-
-.hero-subtitle {
-    max-width: 850px;
-    font-size: 16px;
-    color: #f5d9ba;
-    margin-top: 12px;
-    line-height: 1.8;
-}
-
-.section-head {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    padding: 18px 20px;
-    border-radius: 24px;
-    background: linear-gradient(135deg, rgba(255,255,255,0.115), rgba(255,255,255,0.045));
-    border: 1px solid rgba(255, 226, 188, 0.16);
-    box-shadow: 0 14px 38px rgba(0,0,0,0.26);
-    margin: 18px 0 16px 0;
-}
-
-.section-icon {
-    width: 42px;
-    height: 42px;
-    display: grid;
-    place-items: center;
-    border-radius: 15px;
-    background: linear-gradient(135deg, #d18440, #ffc57e);
-    color: #1b0e06;
-    font-size: 22px;
-    font-weight: 1000;
-}
-
-.section-title {
-    color: #fff2df;
-    font-size: 19px;
-    font-weight: 1000;
-}
-
-.section-subtitle {
-    color: #f2cda8;
-    font-size: 13px;
-    margin-top: 3px;
-}
-
-.lab-card, .condition-box {
-    background: linear-gradient(135deg, rgba(255,255,255,0.105), rgba(255,255,255,0.045));
-    border: 1px solid rgba(255, 226, 188, 0.17);
-    border-radius: 24px;
-    padding: 20px 22px;
-    box-shadow: 0 16px 42px rgba(0,0,0,0.30);
-    margin-bottom: 18px;
-}
-
-.lab-card-title, .condition-title {
-    color: #ffd89f;
-    font-weight: 950;
-    font-size: 17px;
-    margin-bottom: 9px;
-}
-
-.lab-card-body, .condition-text {
-    color: #f6ddc1;
-    font-size: 14px;
-    line-height: 1.85;
-}
-
-.danger-card {
-    background: linear-gradient(135deg, rgba(150, 32, 22, 0.38), rgba(76, 18, 13, 0.24));
-    border: 1px solid rgba(255, 125, 95, 0.42);
-    border-radius: 24px;
-    padding: 20px 22px;
-    box-shadow: 0 16px 42px rgba(0,0,0,0.28);
-    margin-top: 22px;
-}
-
-label {
-    color: #ffe7c9 !important;
-    font-weight: 900 !important;
-}
-
-.stTextInput input,
-.stNumberInput input,
-.stTextArea textarea {
-    background: rgba(255, 250, 242, 0.98) !important;
-    color: #241205 !important;
-    border-radius: 12px !important;
-}
-
-.stSelectbox div[data-baseweb="select"] > div {
-    background: rgba(255, 250, 242, 0.98) !important;
-    color: #241205 !important;
-    border-radius: 12px !important;
-}
-
-.stButton > button,
-.stFormSubmitButton > button {
-    width: 100%;
-    border-radius: 16px !important;
-    padding: 0.85rem 1.15rem !important;
-    background: linear-gradient(135deg, #ffad5f 0%, #ffd18b 55%, #ffbd70 100%) !important;
-    color: #241005 !important;
-    font-weight: 1000 !important;
-    font-size: 16px !important;
-}
-
-[data-testid="stMetric"] {
-    background: linear-gradient(135deg, rgba(255,255,255,0.12), rgba(255,255,255,0.045));
-    border: 1px solid rgba(255, 226, 188, 0.16);
-    padding: 20px;
-    border-radius: 24px;
-    box-shadow: 0 16px 42px rgba(0,0,0,0.30);
-}
-
-[data-testid="stMetricLabel"] {
-    color: #ffd89f !important;
-    font-weight: 900;
-}
-
-[data-testid="stMetricValue"] {
-    color: #fff6ea !important;
-    font-weight: 1000;
-}
-
-[data-testid="stDataFrame"] {
-    border-radius: 18px;
-    overflow: hidden;
-}
-</style>
-""", unsafe_allow_html=True)
+st.sidebar.divider()
+st.sidebar.caption("CSVは data フォルダに自動保存されます。")
 
 
 # =========================
-# ヘッダー
+# ホーム
 # =========================
-st.markdown("""
-<div class="hero-card">
-    <div class="hero-label">LIGHT ROAST COFFEE LAB</div>
-    <div class="hero-title">☕ 浅煎りコーヒー研究ログ</div>
-    <div class="hero-subtitle">
-        条件登録、結果入力、ワード検索、SCA風チャート、データ分析までGoogleスプレッドシートに同期。
-    </div>
-</div>
-""", unsafe_allow_html=True)
+if page == "ホーム":
+    st.title("Roast & Brew Lab ☕")
+    st.write("焙煎条件、豆色、Agtron値、抽出条件、味の評価をつなげて記録する研究ログアプリです。")
 
+    c1, c2, c3 = st.columns(3)
+    c1.metric("登録豆数", len(beans_df))
+    c2.metric("焙煎ログ数", len(roasts_df))
+    c3.metric("抽出ログ数", len(brews_df))
 
-df = load_data()
+    st.subheader("データの流れ")
+    st.code(
+        """
+豆マスタ
+  ↓
+焙煎ログ：高速 / 中速 / 低速、Agtron値、豆色スコア、カラー値
+  ↓
+抽出ログ：湯温、挽き目、TDS、収率、味評価
+  ↓
+分析：焙煎方法と抽出結果・味の関係を見る
+        """.strip()
+    )
 
-
-# =========================
-# 上部サマリー
-# =========================
-summary_df = df.copy()
-
-if not summary_df.empty:
-    summary_df["TDS%"] = pd.to_numeric(summary_df["TDS%"], errors="coerce")
-    summary_df["抽出収率%"] = pd.to_numeric(summary_df["抽出収率%"], errors="coerce")
-
-    total_count = len(summary_df)
-    measured_count = summary_df["TDS%"].notna().sum()
-    avg_tds = summary_df["TDS%"].mean()
-    avg_yield = summary_df["抽出収率%"].mean()
-else:
-    total_count = 0
-    measured_count = 0
-    avg_tds = None
-    avg_yield = None
-
-col_a, col_b, col_c, col_d = st.columns(4)
-
-with col_a:
-    st.metric("実験数", total_count)
-
-with col_b:
-    st.metric("結果入力済み", measured_count)
-
-with col_c:
-    if avg_tds is None or pd.isna(avg_tds):
-        st.metric("平均TDS", "-")
-    else:
-        st.metric("平均TDS", f"{avg_tds:.2f}%")
-
-with col_d:
-    if avg_yield is None or pd.isna(avg_yield):
-        st.metric("平均抽出収率", "-")
-    else:
-        st.metric("平均抽出収率", f"{avg_yield:.2f}%")
-
-
-st.markdown("<br>", unsafe_allow_html=True)
-
-tab1, tab2, tab3, tab4 = st.tabs(["① 条件登録", "② 結果入力", "③ データ確認・分析", "④ 編集・削除"])
+    st.info("まずは『豆マスタ登録』→『焙煎ログ登録』→『抽出ログ登録』の順番で使います。")
 
 
 # =========================
-# ① 条件登録
+# 豆マスタ登録
 # =========================
-with tab1:
-    st.header("① 抽出前の条件を登録")
+elif page == "豆マスタ登録":
+    st.title("豆マスタ登録")
+    st.write("同じ豆を何回も焙煎・抽出で使えるように、豆そのものの情報を登録します。")
 
-    st.markdown("""
-    <div class="lab-card">
-        <div class="lab-card-title">実験の考え方</div>
-        <div class="lab-card-body">
-            ここでは抽出前に決まっている条件だけを登録します。
-            抽出液量、抽出時間、TDS、味評価は抽出後に「② 結果入力」で記録します。
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    with st.form("bean_form"):
+        bean_name = st.text_input("豆名", placeholder="例：Ethiopia Yirgacheffe")
+        origin = st.text_input("産地", placeholder="例：Ethiopia")
+        variety = st.text_input("品種", placeholder="例：Heirloom")
+        process = st.selectbox("精製方法", ["", "Washed", "Natural", "Honey", "Anaerobic", "Other"])
+        memo = st.text_area("メモ")
+        submitted = st.form_submit_button("豆を登録")
 
-    exp_no = next_experiment_no(df)
-    st.info(f"今回の実験No：{exp_no}")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        section_header("☕", "基本条件", "豆・焙煎・レシピの土台を記録")
-
-        bean_type = st.text_input("豆の種類", value="Brazil")
-
-        roast_level = st.number_input(
-            "焙煎度（1〜8）",
-            min_value=1,
-            max_value=8,
-            value=5,
-            step=1
-        )
-        st.caption(f"焙煎度{roast_level}：{ROAST_NAMES[roast_level]}")
-
-        coffee_weight = st.number_input(
-            "豆量g",
-            min_value=0.0,
-            value=10.0,
-            step=0.1
-        )
-
-        water_weight = st.number_input(
-            "湯量g",
-            min_value=0.0,
-            value=180.0,
-            step=0.1
-        )
-
-        water_temp = st.number_input(
-            "湯温℃",
-            min_value=0.0,
-            value=95.0,
-            step=0.5
-        )
-
-    with col2:
-        section_header("🧪", "抽出条件", "器具・挽き目・注湯の違いを記録")
-
-        grind_size = st.text_input("挽き目", value="8.1")
-        dripper = st.text_input("ドリッパー", value="V60")
-        filter_type = st.text_input("フィルター", value="HARIO 白")
-
-        pour_method_choice = st.selectbox(
-            "煎れ方",
-            ["二刀入れ", "一刀入れ", "その他"]
-        )
-
-        if pour_method_choice == "その他":
-            pour_method = st.text_input(
-                "煎れ方を入力",
-                value="",
-                placeholder="例）三刀入れ、センター注湯、円を描く注湯"
-            )
+    if submitted:
+        if bean_name.strip() == "":
+            st.error("豆名は必須です。")
         else:
-            pour_method = pour_method_choice
+            new_row = {
+                "bean_id": make_id("B"),
+                "bean_name": bean_name.strip(),
+                "origin": origin.strip(),
+                "variety": variety.strip(),
+                "process": process,
+                "memo": memo.strip(),
+                "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            }
+            beans_df = pd.concat([beans_df, pd.DataFrame([new_row])], ignore_index=True)
+            save_csv(beans_df, BEANS_FILE)
+            st.success("豆を登録しました。")
+            st.rerun()
 
-        pour_memo = st.text_area(
-            "煎れ方メモ",
-            value="",
-            placeholder="例）0:00〜20g蒸らし、0:30〜100g、1:10〜180g"
-        )
+    st.subheader("登録済みの豆")
+    st.dataframe(beans_df, use_container_width=True)
 
-        bloom = st.selectbox(
-            "蒸らし有無",
-            ["あり", "なし"]
-        )
 
-        bloom_time = st.number_input(
-            "蒸らし時間秒",
-            min_value=0,
-            value=30,
-            step=1
-        )
+# =========================
+# 焙煎ログ登録
+# =========================
+elif page == "焙煎ログ登録":
+    st.title("焙煎ログ登録")
+    st.write("焙煎速度、Agtron値、豆色スコア、焙煎度カラー値を記録します。")
 
-        bloom_water = st.number_input(
-            "蒸らし湯量g",
-            min_value=0.0,
-            value=20.0,
-            step=0.1
-        )
-
-        days_after_roast = st.number_input(
-            "焙煎後日数",
-            min_value=0,
-            value=1,
-            step=1
-        )
-
-        days_after_open = st.number_input(
-            "開封後日数",
-            min_value=0,
-            value=0,
-            step=1
-        )
-
-    st.markdown("---")
-
-    if st.button("この条件を保存する"):
-        condition_errors = []
-
-        if coffee_weight <= 0:
-            condition_errors.append("豆量が0g以下です。豆量を入力してください。")
-
-        if water_weight <= 0:
-            condition_errors.append("湯量が0g以下です。湯量を入力してください。")
-
-        if water_temp <= 0:
-            condition_errors.append("湯温が0℃以下です。湯温を確認してください。")
-
-        if condition_errors:
-            for error in condition_errors:
-                st.error(error)
-            st.stop()
-
-        new_row = {
-            "実験No": exp_no,
-            "日付": datetime.now().strftime("%Y-%m-%d %H:%M"),
-            "豆の種類": bean_type,
-            "焙煎度": roast_level,
-            "豆量g": coffee_weight,
-            "湯量g": water_weight,
-            "湯温℃": water_temp,
-            "挽き目": grind_size,
-            "ドリッパー": dripper,
-            "フィルター": filter_type,
-            "煎れ方": pour_method,
-            "煎れ方メモ": pour_memo,
-            "蒸らし有無": bloom,
-            "蒸らし時間秒": bloom_time,
-            "蒸らし湯量g": bloom_water,
-            "焙煎後日数": days_after_roast,
-            "開封後日数": days_after_open,
-            "抽出液量g": "",
-            "抽出時間秒": "",
-            "TDS%": "",
-            "抽出収率%": "",
-            "酸味": "",
-            "甘味": "",
-            "苦味": "",
-            "雑味": "",
-            "香り": "",
-            "飲みやすさ": "",
-            "コメント": ""
+    if beans_df.empty:
+        st.warning("先に『豆マスタ登録』で豆を登録してください。")
+    else:
+        bean_options = {
+            f"{row['bean_id']} / {row['bean_name']} / {row['origin']} / {row['process']}": row
+            for _, row in beans_df.iterrows()
         }
 
-        df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
-        save_data(df)
+        with st.form("roast_form"):
+            selected_bean_label = st.selectbox("焙煎する豆", list(bean_options.keys()))
+            selected_bean = bean_options[selected_bean_label]
 
-        st.success(f"実験No.{exp_no} の条件をGoogleスプレッドシートに保存しました。")
-        st.rerun()
+            c1, c2, c3 = st.columns(3)
+            roast_date = c1.date_input("焙煎日", value=date.today())
+            roaster = c2.text_input("焙煎機", placeholder="例：手網 / Gene Cafe / Aillio Bullet")
+            roast_speed = c3.selectbox("焙煎スピード", ["高速", "中速", "低速"])
 
+            c4, c5, c6 = st.columns(3)
+            green_weight_g = c4.number_input("生豆量 g", min_value=0.0, value=100.0, step=1.0)
+            roasted_weight_g = c5.number_input("焙煎後重量 g", min_value=0.0, value=85.0, step=1.0)
+            weight_loss_percent = calc_weight_loss(green_weight_g, roasted_weight_g)
+            c6.metric("重量減少率", f"{weight_loss_percent:.2f}%")
 
-# =========================
-# ② 結果入力
-# =========================
-with tab2:
-    st.header("② 抽出後の結果を入力")
+            st.markdown("#### 焙煎プロファイル")
+            c7, c8, c9 = st.columns(3)
+            charge_temp_c = c7.number_input("投入温度 ℃", min_value=0.0, value=180.0, step=1.0)
+            total_roast_time_sec = c8.number_input("総焙煎時間 秒", min_value=0, value=480, step=10)
+            drop_temp_c = c9.number_input("排出温度 ℃", min_value=0.0, value=200.0, step=1.0)
 
-    df = load_data()
+            c10, c11, c12 = st.columns(3)
+            first_crack_start_sec = c10.number_input("1ハゼ開始 秒", min_value=0, value=360, step=10)
+            development_time_sec = c11.number_input("デベロップメント時間 秒", min_value=0, value=90, step=10)
+            roast_level_8 = c12.slider("焙煎度 8段階", 1, 8, 3)
 
-    if df.empty:
-        st.warning("まだ条件が登録されていません。まずは①条件登録から始めてください。")
+            st.markdown("#### 焙煎後の豆の結果")
+            c13, c14, c15 = st.columns(3)
+            agtron_value = c13.number_input("Agtron値", min_value=0.0, max_value=150.0, value=85.0, step=1.0)
+            bean_color_score = c14.slider("豆色スコア 明るい1〜暗い10", 1, 10, 4)
+            roast_color_hex = c15.color_picker("焙煎度カラー値", "#8B5A2B")
+
+            c16, c17 = st.columns(2)
+            unevenness_score = c16.slider("焼きムラ 少ない1〜多い5", 1, 5, 2)
+            roast_aroma_score = c17.slider("焙煎後の香り 1〜5", 1, 5, 3)
+
+            roast_memo = st.text_area("焙煎メモ", placeholder="例：高速気味。酸が残りそう。1ハゼ後は短め。")
+            submitted = st.form_submit_button("焙煎ログを登録")
+
+        if submitted:
+            if total_roast_time_sec <= 0:
+                st.error("総焙煎時間は1秒以上にしてください。")
+            elif first_crack_start_sec > total_roast_time_sec:
+                st.error("1ハゼ開始時間が総焙煎時間を超えています。")
+            else:
+                new_row = {
+                    "roast_id": make_id("R"),
+                    "bean_id": selected_bean["bean_id"],
+                    "bean_name": selected_bean["bean_name"],
+                    "roast_date": roast_date.strftime("%Y-%m-%d"),
+                    "green_weight_g": green_weight_g,
+                    "roasted_weight_g": roasted_weight_g,
+                    "weight_loss_percent": weight_loss_percent,
+                    "roaster": roaster.strip(),
+                    "roast_speed": roast_speed,
+                    "charge_temp_c": charge_temp_c,
+                    "total_roast_time_sec": total_roast_time_sec,
+                    "first_crack_start_sec": first_crack_start_sec,
+                    "development_time_sec": development_time_sec,
+                    "drop_temp_c": drop_temp_c,
+                    "roast_level_8": roast_level_8,
+                    "agtron_value": agtron_value,
+                    "bean_color_score": bean_color_score,
+                    "roast_color_hex": roast_color_hex,
+                    "unevenness_score": unevenness_score,
+                    "roast_aroma_score": roast_aroma_score,
+                    "roast_memo": roast_memo.strip(),
+                    "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                }
+                roasts_df = pd.concat([roasts_df, pd.DataFrame([new_row])], ignore_index=True)
+                save_csv(roasts_df, ROASTS_FILE)
+                st.success("焙煎ログを登録しました。")
+                st.rerun()
+
+    st.subheader("登録済みの焙煎ログ")
+    if not roasts_df.empty:
+        show_roasts = roasts_df.copy()
+        show_roasts["総焙煎時間"] = show_roasts["total_roast_time_sec"].apply(sec_to_minsec)
+        st.dataframe(show_roasts, use_container_width=True)
     else:
-        section_header("🎯", "測定する実験を選択", "抽出後のTDS・抽出収率・味評価を記録")
+        st.info("まだ焙煎ログはありません。")
 
-        exp_list = df["実験No"].tolist()
 
-        selected_no = st.selectbox(
-            "結果を入力する実験No",
-            exp_list
+# =========================
+# 抽出ログ登録
+# =========================
+elif page == "抽出ログ登録":
+    st.title("抽出ログ登録")
+    st.write("登録済みの焙煎ログを選んで、その豆で抽出した結果を記録します。")
+
+    if roasts_df.empty:
+        st.warning("先に『焙煎ログ登録』で焙煎ログを登録してください。")
+    else:
+        roast_options = {get_roast_label(row): row for _, row in roasts_df.iterrows()}
+
+        with st.form("brew_form"):
+            selected_roast_label = st.selectbox("使用する焙煎豆", list(roast_options.keys()))
+            selected_roast = roast_options[selected_roast_label]
+
+            c1, c2, c3 = st.columns(3)
+            brew_date = c1.date_input("抽出日", value=date.today())
+            roast_date_value = datetime.strptime(str(selected_roast["roast_date"]), "%Y-%m-%d").date()
+            days_after_roast = (brew_date - roast_date_value).days
+            c2.metric("焙煎後日数", f"{days_after_roast}日")
+            c3.write("使用豆")
+            c3.write(selected_roast["bean_name"])
+
+            st.markdown("#### 抽出条件")
+            c4, c5, c6 = st.columns(3)
+            dripper = c4.text_input("ドリッパー", placeholder="例：V60 / Origami / Kalita")
+            filter_type = c5.text_input("フィルター", placeholder="例：ペーパー / メタル")
+            grind_size = c6.number_input("挽き目", min_value=0.0, value=8.0, step=0.1)
+
+            c7, c8, c9 = st.columns(3)
+            dose_g = c7.number_input("粉量 g", min_value=0.0, value=15.0, step=0.5)
+            water_g = c8.number_input("湯量 g", min_value=0.0, value=240.0, step=5.0)
+            brew_ratio = calc_brew_ratio(water_g, dose_g)
+            c9.metric("抽出比率", f"1:{brew_ratio:.2f}")
+
+            c10, c11, c12 = st.columns(3)
+            water_temp_c = c10.number_input("湯温 ℃", min_value=0.0, value=92.0, step=1.0)
+            brew_time_sec = c11.number_input("抽出時間 秒", min_value=0, value=180, step=5)
+            beverage_g = c12.number_input("抽出液量 g", min_value=0.0, value=200.0, step=5.0)
+
+            c13, c14 = st.columns(2)
+            tds_percent = c13.number_input("TDS %", min_value=0.0, value=1.30, step=0.01)
+            extraction_yield_percent = calc_extraction_yield(beverage_g, tds_percent, dose_g)
+            c14.metric("収率", f"{extraction_yield_percent:.2f}%")
+
+            st.markdown("#### 味の評価 1〜5")
+            c15, c16, c17, c18 = st.columns(4)
+            acidity_score = c15.slider("酸味", 1, 5, 3)
+            sweetness_score = c16.slider("甘味", 1, 5, 3)
+            bitterness_score = c17.slider("苦味", 1, 5, 2)
+            aroma_score = c18.slider("香り", 1, 5, 3)
+
+            c19, c20, c21, c22 = st.columns(4)
+            body_score = c19.slider("ボディ", 1, 5, 3)
+            aftertaste_score = c20.slider("後味", 1, 5, 3)
+            misc_score = c21.slider("雑味 少ない5〜多い1", 1, 5, 4)
+            overall_score = c22.slider("総合評価", 1, 5, 3)
+
+            brew_memo = st.text_area("抽出メモ", placeholder="例：酸味は明るいが少し薄い。次は挽き目を細かくする。")
+            submitted = st.form_submit_button("抽出ログを登録")
+
+        if submitted:
+            if days_after_roast < 0:
+                st.error("抽出日が焙煎日より前になっています。")
+            elif dose_g <= 0:
+                st.error("粉量は0より大きくしてください。")
+            elif water_g <= 0:
+                st.error("湯量は0より大きくしてください。")
+            elif tds_percent <= 0:
+                st.error("TDSは0より大きくしてください。")
+            else:
+                new_row = {
+                    "brew_id": make_id("BR"),
+                    "roast_id": selected_roast["roast_id"],
+                    "bean_name": selected_roast["bean_name"],
+                    "brew_date": brew_date.strftime("%Y-%m-%d"),
+                    "days_after_roast": days_after_roast,
+                    "dripper": dripper.strip(),
+                    "filter_type": filter_type.strip(),
+                    "grind_size": grind_size,
+                    "dose_g": dose_g,
+                    "water_g": water_g,
+                    "brew_ratio": brew_ratio,
+                    "water_temp_c": water_temp_c,
+                    "brew_time_sec": brew_time_sec,
+                    "beverage_g": beverage_g,
+                    "tds_percent": tds_percent,
+                    "extraction_yield_percent": extraction_yield_percent,
+                    "acidity_score": acidity_score,
+                    "sweetness_score": sweetness_score,
+                    "bitterness_score": bitterness_score,
+                    "aroma_score": aroma_score,
+                    "body_score": body_score,
+                    "aftertaste_score": aftertaste_score,
+                    "misc_score": misc_score,
+                    "overall_score": overall_score,
+                    "brew_memo": brew_memo.strip(),
+                    "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                }
+                brews_df = pd.concat([brews_df, pd.DataFrame([new_row])], ignore_index=True)
+                save_csv(brews_df, BREWS_FILE)
+                st.success("抽出ログを登録しました。")
+                st.rerun()
+
+    st.subheader("登録済みの抽出ログ")
+    if not brews_df.empty:
+        st.dataframe(brews_df, use_container_width=True)
+    else:
+        st.info("まだ抽出ログはありません。")
+
+
+# =========================
+# 分析
+# =========================
+elif page == "分析":
+    st.title("分析")
+    st.write("焙煎条件と抽出結果・味の関係を見ます。")
+
+    if roasts_df.empty or brews_df.empty:
+        st.warning("分析には焙煎ログと抽出ログの両方が必要です。")
+    else:
+        merged = brews_df.merge(
+            roasts_df,
+            on=["roast_id", "bean_name"],
+            how="left",
+            suffixes=("_brew", "_roast"),
         )
-
-        target = df[df["実験No"] == selected_no].iloc[0]
-
-        roast_text = ""
-        try:
-            roast_num = int(float(target["焙煎度"]))
-            roast_text = ROAST_NAMES.get(roast_num, "")
-        except Exception:
-            roast_text = ""
-
-        st.markdown(f"""
-        <div class="condition-box">
-            <div class="condition-title">実験No.{esc(target["実験No"])} の抽出条件</div>
-            <div class="condition-text">
-                豆の種類：{esc(target["豆の種類"])}<br>
-                焙煎度：{esc(target["焙煎度"])} {esc(roast_text)}<br>
-                豆量：{esc(target["豆量g"])} g ／ 湯量：{esc(target["湯量g"])} g ／ 湯温：{esc(target["湯温℃"])} ℃<br>
-                挽き目：{esc(target["挽き目"])}<br>
-                ドリッパー：{esc(target["ドリッパー"])} ／ フィルター：{esc(target["フィルター"])}<br>
-                煎れ方：{esc(target["煎れ方"])}<br>
-                煎れ方メモ：{esc(target["煎れ方メモ"])}<br>
-                蒸らし：{esc(target["蒸らし有無"])} ／ 蒸らし時間：{esc(target["蒸らし時間秒"])} 秒 ／ 蒸らし湯量：{esc(target["蒸らし湯量g"])} g<br>
-                焙煎後日数：{esc(target["焙煎後日数"])} 日 ／ 開封後日数：{esc(target["開封後日数"])} 日
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-        col1, col2 = st.columns(2)
-
-        with col1:
-            section_header("📐", "測定結果", "TDS・抽出量・抽出時間を入力")
-
-            beverage_weight = st.number_input(
-                "抽出液量g",
-                min_value=0.0,
-                value=safe_float(target["抽出液量g"], 150.0),
-                step=0.1
-            )
-
-            brew_time = st.number_input(
-                "抽出時間秒",
-                min_value=0,
-                value=safe_int(target["抽出時間秒"], 0),
-                step=1
-            )
-
-            tds = st.number_input(
-                "TDS%",
-                min_value=0.0,
-                value=safe_float(target["TDS%"], 1.25),
-                step=0.01
-            )
-
-        with col2:
-            section_header("🌿", "味評価", "主観評価を1〜5で記録")
-
-            acidity = st.slider("酸味", 1, 5, safe_int(target["酸味"], 3))
-            sweetness = st.slider("甘味", 1, 5, safe_int(target["甘味"], 3))
-            bitterness = st.slider("苦味", 1, 5, safe_int(target["苦味"], 2))
-            off_flavor = st.slider("雑味", 1, 5, safe_int(target["雑味"], 3))
-            aroma = st.slider("香り", 1, 5, safe_int(target["香り"], 3))
-            drinkability = st.slider("飲みやすさ", 1, 5, safe_int(target["飲みやすさ"], 3))
-
-        comment = st.text_area("コメント", value=str(target["コメント"]))
-
-        coffee_weight = safe_float(target["豆量g"])
-        extraction_yield = calc_yield(tds, beverage_weight, coffee_weight)
-
-        tds_label, tds_comment = judge_tds(tds)
-        yield_label = judge_yield(extraction_yield)
-
-        metric_col1, metric_col2, metric_col3 = st.columns(3)
-
-        with metric_col1:
-            st.metric("TDS判定", tds_label)
-
-        with metric_col2:
-            st.metric("抽出収率%", f"{extraction_yield:.2f}%")
-
-        with metric_col3:
-            st.metric("抽出収率判定", yield_label)
-
-        validation_warnings = []
-
-        if tds <= 0:
-            validation_warnings.append("TDSが0%です。まだ測定していない場合は保存前に確認してください。")
-
-        if brew_time == 0:
-            validation_warnings.append("抽出時間が0秒です。スマホ入力ミスの可能性があります。")
-
-        water_weight_for_check = safe_float(target["湯量g"], 0)
-        if water_weight_for_check > 0 and beverage_weight > water_weight_for_check:
-            validation_warnings.append("抽出液量が湯量より大きくなっています。アイスの場合は氷が溶けた分まで入っていないか確認してください。")
-
-        confirm_warning_save = True
-        if validation_warnings:
-            st.warning("入力値に確認が必要な項目があります。")
-            for warning in validation_warnings:
-                st.write(f"・{warning}")
-            confirm_warning_save = st.checkbox(
-                "上の注意点を確認したうえで保存する",
-                key=f"confirm_warning_save_{selected_no}"
-            )
-
-        if st.button("この結果を保存する"):
-            if validation_warnings and not confirm_warning_save:
-                st.error("注意点を確認するチェックを入れるまで保存できません。")
-                st.stop()
-
-            idx = df.index[df["実験No"] == selected_no][0]
-
-            df.at[idx, "抽出液量g"] = beverage_weight
-            df.at[idx, "抽出時間秒"] = brew_time
-            df.at[idx, "TDS%"] = tds
-            df.at[idx, "抽出収率%"] = extraction_yield
-
-            df.at[idx, "酸味"] = acidity
-            df.at[idx, "甘味"] = sweetness
-            df.at[idx, "苦味"] = bitterness
-            df.at[idx, "雑味"] = off_flavor
-            df.at[idx, "香り"] = aroma
-            df.at[idx, "飲みやすさ"] = drinkability
-            df.at[idx, "コメント"] = comment
-
-            save_data(df)
-
-            st.success("結果をGoogleスプレッドシートに保存しました。")
-            st.info(tds_comment)
-            st.rerun()
-
-
-# =========================
-# ③ データ確認・分析
-# =========================
-with tab3:
-    st.header("③ 過去データ確認・分析")
-
-    df = load_data()
-
-    if df.empty:
-        st.info("まだ実験データがありません。")
-    else:
-        graph_df = df.copy()
 
         numeric_cols = [
-            "実験No", "焙煎度", "豆量g", "湯量g", "湯温℃",
-            "抽出液量g", "抽出時間秒", "TDS%", "抽出収率%",
-            "酸味", "甘味", "苦味", "雑味", "香り", "飲みやすさ",
-            "焙煎後日数", "開封後日数", "挽き目"
+            "agtron_value",
+            "bean_color_score",
+            "total_roast_time_sec",
+            "development_time_sec",
+            "weight_loss_percent",
+            "days_after_roast",
+            "water_temp_c",
+            "grind_size",
+            "tds_percent",
+            "extraction_yield_percent",
+            "acidity_score",
+            "sweetness_score",
+            "bitterness_score",
+            "aroma_score",
+            "body_score",
+            "aftertaste_score",
+            "misc_score",
+            "overall_score",
         ]
-
         for col in numeric_cols:
-            if col in graph_df.columns:
-                graph_df[col] = pd.to_numeric(graph_df[col], errors="coerce")
+            if col in merged.columns:
+                merged[col] = pd.to_numeric(merged[col], errors="coerce")
 
-        graph_df = graph_df.dropna(subset=["実験No"])
-        valid_df = graph_df.dropna(subset=["TDS%", "抽出収率%"]).copy()
+        st.subheader("焙煎スピード別の平均評価")
+        speed_summary = (
+            merged.groupby("roast_speed")[[
+                "overall_score",
+                "acidity_score",
+                "sweetness_score",
+                "bitterness_score",
+                "aroma_score",
+                "tds_percent",
+                "extraction_yield_percent",
+            ]]
+            .mean()
+            .round(2)
+            .reset_index()
+        )
+        st.dataframe(speed_summary, use_container_width=True)
 
-        # =========================
-        # ワード検索
-        # =========================
-        section_header("🔍", "実験ログ検索", "キーワードで過去の実験データを呼び出す")
+        chart_target = st.selectbox(
+            "棒グラフにする項目",
+            [
+                "overall_score",
+                "acidity_score",
+                "sweetness_score",
+                "bitterness_score",
+                "aroma_score",
+                "tds_percent",
+                "extraction_yield_percent",
+            ],
+        )
+        chart_df = speed_summary.set_index("roast_speed")[[chart_target]]
+        st.bar_chart(chart_df)
 
-        search_word = st.text_input(
-            "検索ワード",
-            value="",
-            placeholder="例）Brazil、アイス、薄い、雑味、カリタ、一刀入れ、ぬるい"
+        st.subheader("散布図で関係を見る")
+        c1, c2 = st.columns(2)
+        x_col = c1.selectbox(
+            "横軸",
+            [
+                "agtron_value",
+                "bean_color_score",
+                "total_roast_time_sec",
+                "development_time_sec",
+                "weight_loss_percent",
+                "days_after_roast",
+                "water_temp_c",
+                "grind_size",
+                "tds_percent",
+                "extraction_yield_percent",
+            ],
+        )
+        y_col = c2.selectbox(
+            "縦軸",
+            [
+                "overall_score",
+                "acidity_score",
+                "sweetness_score",
+                "bitterness_score",
+                "aroma_score",
+                "tds_percent",
+                "extraction_yield_percent",
+            ],
         )
 
-        search_df = df.copy()
+        scatter_df = merged[[x_col, y_col, "roast_speed", "bean_name"]].dropna()
+        st.scatter_chart(scatter_df, x=x_col, y=y_col)
 
-        if search_word:
-            search_cols = HEADERS
-            keyword_mask = pd.Series(False, index=search_df.index)
+        st.subheader("結合済みデータ")
+        st.dataframe(merged, use_container_width=True)
 
-            for col in search_cols:
-                if col in search_df.columns:
-                    keyword_mask = keyword_mask | search_df[col].astype(str).str.contains(
-                        search_word,
-                        case=False,
-                        na=False
-                    )
-
-            search_df = search_df[keyword_mask]
-
-        st.write(f"検索結果：{len(search_df)} 件")
-        st.dataframe(search_df, width="stretch")
-
-        if search_word and search_df.empty:
-            st.info("このワードに一致する実験はありませんでした。別の言葉で検索してみてください。")
-
-        if search_word and not search_df.empty:
-            st.markdown("""
-            <div class="lab-card">
-                <div class="lab-card-title">検索結果の見方</div>
-                <div class="lab-card-body">
-                    入力したワードが、豆の種類・ドリッパー・フィルター・煎れ方・煎れ方メモ・コメント・数値項目などのどこかに含まれる実験を表示しています。
-                    たとえば「薄い」「アイス」「Brazil」「カリタ」などで、過去の実験をすぐ呼び出せます。
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-
-        # =========================
-        # 測定ステータス
-        # =========================
-        section_header("📝", "測定ステータス", "結果未入力の実験を自動で確認")
-
-        status_df = graph_df.copy()
-        status_df["測定ステータス"] = status_df["TDS%"].apply(
-            lambda x: "測定済み" if pd.notna(x) else "未測定"
+        st.download_button(
+            "結合済みデータをCSVでダウンロード",
+            data=merged.to_csv(index=False, encoding="utf-8-sig"),
+            file_name="roast_brew_merged.csv",
+            mime="text/csv",
         )
-
-        status_count_col1, status_count_col2 = st.columns(2)
-        with status_count_col1:
-            st.metric("測定済み", int((status_df["測定ステータス"] == "測定済み").sum()))
-        with status_count_col2:
-            st.metric("未測定", int((status_df["測定ステータス"] == "未測定").sum()))
-
-        unmeasured_df = status_df[status_df["測定ステータス"] == "未測定"].copy()
-
-        if unmeasured_df.empty:
-            st.success("すべての実験に結果が入力されています。")
-        else:
-            unmeasured_nos = ", ".join(unmeasured_df["実験No"].astype(int).astype(str).tolist())
-            st.warning(f"結果未入力の実験があります：実験No.{unmeasured_nos}")
-            st.dataframe(
-                unmeasured_df[["実験No", "日付", "豆の種類", "焙煎度", "挽き目", "煎れ方"]],
-                width="stretch"
-            )
-
-        # =========================
-        # SCA風チャート
-        # =========================
-        section_header("🧭", "SCA風 ブリューイングコントロールチャート", "TDSと抽出収率から、薄い・濃い・未抽出・過抽出を確認")
-
-        if valid_df.empty:
-            st.info("TDS% と 抽出収率% が入力されると、SCA風チャートが表示されます。")
-        else:
-            st.markdown("""
-            <div class="lab-card">
-                <div class="lab-card-title">SCA風チャートの見方</div>
-                <div class="lab-card-body">
-                    横軸は抽出収率%、縦軸はTDS%です。<br>
-                    目安として、TDS 1.15〜1.35%、抽出収率 18〜22% の範囲を表示しています。<br>
-                    グラフ内は文字化け防止のため英語表記にしています。
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-
-            sca_df = valid_df.copy()
-
-            fig, ax = plt.subplots(figsize=(8, 6))
-
-            ax.axvspan(18, 22, alpha=0.12, label="Extraction Yield 18-22%")
-            ax.axhspan(1.15, 1.35, alpha=0.12, label="TDS 1.15-1.35%")
-
-            ideal_box = plt.Rectangle(
-                (18, 1.15),
-                4,
-                0.20,
-                fill=False,
-                linewidth=2
-            )
-            ax.add_patch(ideal_box)
-
-            ax.scatter(
-                sca_df["抽出収率%"],
-                sca_df["TDS%"],
-                s=90
-            )
-
-            for _, row in sca_df.iterrows():
-                ax.text(
-                    row["抽出収率%"] + 0.08,
-                    row["TDS%"] + 0.01,
-                    f"No.{int(row['実験No'])}",
-                    fontsize=9
-                )
-
-            ax.set_xlabel("Extraction Yield %")
-            ax.set_ylabel("TDS %")
-            ax.set_title("SCA Brewing Control Chart")
-
-            x_min = min(10, sca_df["抽出収率%"].min() - 1)
-            x_max = max(24, sca_df["抽出収率%"].max() + 1)
-            y_min = min(0.6, sca_df["TDS%"].min() - 0.1)
-            y_max = max(1.8, sca_df["TDS%"].max() + 0.1)
-
-            ax.set_xlim(x_min, x_max)
-            ax.set_ylim(y_min, y_max)
-
-            ax.grid(True)
-            ax.legend()
-
-            st.pyplot(fig)
-            st.caption("※SCA風チャートは一般的な目安です。浅煎り、アイス、好みによって理想値は変わります。味の評価とセットで見てください。")
-
-            latest_sca = sca_df.sort_values("実験No").iloc[-1]
-
-            latest_no = int(latest_sca["実験No"])
-            latest_tds_for_sca = safe_float(latest_sca["TDS%"])
-            latest_yield_for_sca = safe_float(latest_sca["抽出収率%"])
-
-            sca_tds_label, sca_tds_comment = judge_sca_tds(latest_tds_for_sca)
-            sca_yield_label, sca_yield_comment = judge_sca_yield(latest_yield_for_sca)
-
-            sca_col1, sca_col2 = st.columns(2)
-
-            with sca_col1:
-                st.metric("最新TDSのSCA風判定", sca_tds_label)
-                st.write(sca_tds_comment)
-
-            with sca_col2:
-                st.metric("最新抽出収率のSCA風判定", sca_yield_label)
-                st.write(sca_yield_comment)
-
-            if latest_tds_for_sca < 1.15 and latest_yield_for_sca < 18:
-                sca_next = "薄く、成分も出きっていない可能性があります。次回は挽き目を少し細かくする、湯温を上げる、抽出時間を長くするなどが候補です。"
-            elif latest_tds_for_sca < 1.15 and latest_yield_for_sca >= 18:
-                sca_next = "抽出はできていますが濃度が低めです。豆量を増やすか、湯量を少し減らすと濃さを上げやすいです。"
-            elif latest_tds_for_sca > 1.35 and latest_yield_for_sca > 22:
-                sca_next = "濃く、出すぎの可能性があります。挽き目を粗くする、湯温を少し下げる、抽出時間を短くするなどが候補です。"
-            elif 1.15 <= latest_tds_for_sca <= 1.35 and 18 <= latest_yield_for_sca <= 22:
-                sca_next = "SCA風の目安ゾーンに入っています。大きく変えず、味評価を見ながら微調整するのが良さそうです。"
-            else:
-                sca_next = "SCA風の目安からは少し外れています。TDSと抽出収率のどちらを優先して改善するか、味評価と合わせて判断すると良さそうです。"
-
-            st.markdown(f"""
-            <div class="lab-card">
-                <div class="lab-card-title">最新実験 No.{latest_no} のSCA風まとめ</div>
-                <div class="lab-card-body">
-                    TDS：{latest_tds_for_sca:.2f}% → {esc(sca_tds_label)}<br>
-                    抽出収率：{latest_yield_for_sca:.2f}% → {esc(sca_yield_label)}<br><br>
-                    {esc(sca_next)}
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-
-        # =========================
-        # TDS推移
-        # =========================
-        section_header("📈", "TDSの推移", "標準グラフでシンプルに表示")
-
-        if valid_df.empty:
-            st.info("まだTDSが入力された実験がありません。")
-        else:
-            st.line_chart(valid_df.set_index("実験No")["TDS%"])
-
-        # =========================
-        # 抽出収率推移
-        # =========================
-        section_header("⚖️", "抽出収率の推移", "標準グラフでシンプルに表示")
-
-        if valid_df.empty:
-            st.info("まだ抽出収率が入力された実験がありません。")
-        else:
-            st.line_chart(valid_df.set_index("実験No")["抽出収率%"])
-
-        # =========================
-        # 目標TDSランキング
-        # =========================
-        section_header("🏆", "目標TDS 1.25%に近い順", "再現したい条件を探すランキング")
-
-        if valid_df.empty:
-            st.info("まだTDSが入力された実験がありません。")
-        else:
-            ranking_df = valid_df.copy()
-            ranking_df["目標との差"] = (ranking_df["TDS%"] - 1.25).abs()
-            ranking_df = ranking_df.sort_values("目標との差")
-
-            ranking_cols = [
-                "実験No", "豆の種類", "焙煎度", "挽き目",
-                "ドリッパー", "フィルター", "煎れ方",
-                "TDS%", "抽出収率%", "目標との差", "コメント"
-            ]
-
-            st.dataframe(ranking_df[ranking_cols], width="stretch")
-
-            best_row = ranking_df.iloc[0]
-
-            st.markdown(f"""
-            <div class="lab-card">
-                <div class="lab-card-title">1.25%に最も近いおすすめ条件</div>
-                <div class="lab-card-body">
-                    現時点では、実験No.{int(best_row["実験No"])} が目標TDS 1.25%に最も近いです。<br>
-                    TDS：{best_row["TDS%"]:.2f}% ／ 抽出収率：{best_row["抽出収率%"]:.2f}% ／ 目標との差：{best_row["目標との差"]:.3f}<br>
-                    豆：{esc(best_row["豆の種類"])} ／ 焙煎度：{esc(best_row["焙煎度"])} ／ 挽き目：{esc(best_row["挽き目"])}<br>
-                    ドリッパー：{esc(best_row["ドリッパー"])} ／ フィルター：{esc(best_row["フィルター"])} ／ 煎れ方：{esc(best_row["煎れ方"])}
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-
-        # =========================
-        # 豆ごとの分析
-        # =========================
-        section_header("☕", "豆ごとの分析", "豆の種類ごとに平均値を比較")
-
-        if valid_df.empty:
-            st.info("まだ分析できるデータがありません。")
-        else:
-            bean_analysis = (
-                valid_df
-                .groupby("豆の種類")
-                .agg(**{
-                    "実験数": ("実験No", "count"),
-                    "平均TDS": ("TDS%", "mean"),
-                    "平均抽出収率": ("抽出収率%", "mean"),
-                    "平均酸味": ("酸味", "mean"),
-                    "平均甘味": ("甘味", "mean"),
-                    "平均雑味": ("雑味", "mean"),
-                    "平均香り": ("香り", "mean"),
-                    "平均飲みやすさ": ("飲みやすさ", "mean"),
-                })
-                .reset_index()
-            )
-
-            st.dataframe(bean_analysis.round(2), width="stretch")
-
-        # =========================
-        # 焙煎後日数ごとの味変化
-        # =========================
-        section_header("🌱", "焙煎後日数ごとの味変化", "香り・甘味・雑味の変化を追う")
-
-        flavor_cols = ["酸味", "甘味", "苦味", "雑味", "香り", "飲みやすさ"]
-        flavor_df = graph_df.dropna(subset=["焙煎後日数"]).copy()
-
-        for col in flavor_cols:
-            flavor_df[col] = pd.to_numeric(flavor_df[col], errors="coerce")
-
-        flavor_df = flavor_df.dropna(subset=flavor_cols, how="all")
-
-        if flavor_df.empty:
-            st.info("焙煎後日数と味評価が入ると、ここに味変化グラフが表示されます。")
-        else:
-            flavor_by_days = (
-                flavor_df
-                .groupby("焙煎後日数")[flavor_cols]
-                .mean()
-                .sort_index()
-            )
-
-            st.line_chart(flavor_by_days)
-            st.caption("焙煎後日数ごとに、酸味・甘味・雑味・香りなどの平均変化を確認できます。")
-
-        # =========================
-        # 挽き目ごとの平均TDS
-        # =========================
-        section_header("🌀", "挽き目ごとの平均TDS", "挽き目と濃度の関係を見る")
-
-        grind_df = valid_df.copy()
-
-        if grind_df.empty:
-            st.info("まだ挽き目ごとの分析に使えるデータがありません。")
-        else:
-            grind_analysis = (
-                grind_df
-                .groupby("挽き目")
-                .agg(**{
-                    "実験数": ("実験No", "count"),
-                    "平均TDS": ("TDS%", "mean"),
-                    "平均抽出収率": ("抽出収率%", "mean"),
-                    "平均雑味": ("雑味", "mean"),
-                    "平均飲みやすさ": ("飲みやすさ", "mean"),
-                })
-                .reset_index()
-            )
-
-            grind_analysis["挽き目_num"] = pd.to_numeric(grind_analysis["挽き目"], errors="coerce")
-            grind_analysis = grind_analysis.sort_values("挽き目_num", na_position="last")
-            grind_analysis = grind_analysis.drop(columns=["挽き目_num"])
-
-            st.dataframe(grind_analysis.round(2), width="stretch")
-
-            chart_grind = grind_analysis.copy()
-            chart_grind["平均TDS"] = pd.to_numeric(chart_grind["平均TDS"], errors="coerce")
-
-            if not chart_grind["平均TDS"].dropna().empty:
-                st.bar_chart(chart_grind.set_index("挽き目")["平均TDS"])
-
-        # =========================
-        # 雑味検出
-        # =========================
-        section_header("⚠️", "雑味が強く出た条件の検出", "雑味4以上の実験を自動抽出")
-
-        off_df = graph_df.copy()
-        off_df["雑味"] = pd.to_numeric(off_df["雑味"], errors="coerce")
-
-        strong_off_df = off_df[off_df["雑味"] >= 4].copy()
-
-        if strong_off_df.empty:
-            st.success("現時点では、雑味4以上の強い雑味データはありません。")
-        else:
-            st.warning("雑味が強く出た実験があります。条件を確認してください。")
-
-            off_cols = [
-                "実験No", "豆の種類", "焙煎度", "焙煎後日数",
-                "挽き目", "ドリッパー", "フィルター", "煎れ方",
-                "TDS%", "抽出収率%", "雑味", "コメント"
-            ]
-
-            st.dataframe(strong_off_df[off_cols], width="stretch")
-
-            st.markdown("""
-            <div class="lab-card">
-                <div class="lab-card-title">雑味が強いときの見方</div>
-                <div class="lab-card-body">
-                    雑味が強い原因としては、抽出しすぎ、挽き目が細かすぎる、抽出時間が長すぎる、
-                    焙煎直後でガスが多い、注湯で攪拌が強すぎる、などが考えられます。
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-
-        # =========================
-        # 次回条件提案
-        # =========================
-        section_header("🧭", "今日の結果から次回条件を提案", "最新実験から次に変えるべき条件を提案")
-
-        if valid_df.empty:
-            st.info("TDSと抽出収率が入力されると、次回条件の提案が表示されます。")
-        else:
-            latest_row = valid_df.sort_values("実験No").iloc[-1]
-
-            latest_tds = safe_float(latest_row["TDS%"])
-            latest_yield = safe_float(latest_row["抽出収率%"])
-            latest_off = safe_float(latest_row["雑味"])
-            latest_aroma = safe_float(latest_row["香り"])
-            latest_sweet = safe_float(latest_row["甘味"])
-            latest_roast_days = safe_float(latest_row["焙煎後日数"])
-            latest_grind = latest_row["挽き目"]
-
-            suggestions = []
-
-            if latest_tds < 1.20:
-                suggestions.append("TDSが低めなので、次回は挽き目を少し細かくする、または抽出時間を少し伸ばす候補があります。")
-            elif latest_tds > 1.30:
-                suggestions.append("TDSが高めなので、次回は挽き目を少し粗くする、または抽出時間を少し短くする候補があります。")
-            else:
-                suggestions.append("TDSは1.25%前後で良い範囲です。次回は同条件でもう一度試して再現性を確認する価値があります。")
-
-            if latest_yield < 18:
-                suggestions.append("抽出収率が18%未満なので、抽出不足気味です。浅煎りなら少し細かくする、蒸らしを丁寧にする、注湯をゆっくりにする候補があります。")
-            elif latest_yield > 22:
-                suggestions.append("抽出収率が22%を超えているので、過抽出気味です。雑味や渋みがあるなら、挽き目を粗くするか抽出時間を短くする候補があります。")
-            else:
-                suggestions.append("抽出収率は18〜22%の適正範囲です。大きく変えず、味評価に合わせて微調整するのが良さそうです。")
-
-            if latest_off >= 4:
-                if latest_roast_days <= 2:
-                    suggestions.append("雑味が強く、焙煎後日数も浅いので、同条件で焙煎後3〜5日目に再実験すると豆の落ち着きが確認できます。")
-                elif latest_yield >= 21:
-                    suggestions.append("雑味が強く、抽出収率も高めなので、次回は挽き目を少し粗くするか、注湯の攪拌を弱める候補があります。")
-                else:
-                    suggestions.append("雑味が強いですが抽出収率だけでは過抽出とは言い切れません。フィルター、注湯の勢い、蒸らし条件も確認すると良さそうです。")
-
-            if latest_aroma <= 2:
-                suggestions.append("香り評価が低めです。焙煎後日数を変えて比較するか、蒸らしを丁寧にして香りの立ち上がりを見ると良さそうです。")
-
-            if latest_sweet <= 2 and 1.20 <= latest_tds <= 1.30:
-                suggestions.append("TDSは良いのに甘味が弱いので、抽出収率・焙煎後日数・注湯メモを見ながら、同じ濃度で味の質を上げる方向が良さそうです。")
-
-            suggestion_html = "<br>".join([f"・{esc(s)}" for s in suggestions])
-
-            st.markdown(f"""
-            <div class="lab-card">
-                <div class="lab-card-title">最新実験 No.{int(latest_row["実験No"])} からの次回提案</div>
-                <div class="lab-card-body">
-                    最新条件：豆 {esc(latest_row["豆の種類"])} ／ 焙煎度 {esc(latest_row["焙煎度"])} ／ 挽き目 {esc(latest_grind)} ／ 煎れ方 {esc(latest_row["煎れ方"])}<br>
-                    TDS：{latest_tds:.2f}% ／ 抽出収率：{latest_yield:.2f}% ／ 雑味：{latest_off:.0f} ／ 香り：{latest_aroma:.0f}<br><br>
-                    {suggestion_html}
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
 
 
 # =========================
-# ④ 編集・削除
+# データ一覧・検索
 # =========================
-with tab4:
-    st.header("④ 過去データの編集・削除")
+elif page == "データ一覧・検索":
+    st.title("データ一覧・検索")
 
-    df = load_data()
+    tab1, tab2, tab3 = st.tabs(["豆", "焙煎ログ", "抽出ログ"])
 
-    if df.empty:
-        st.warning("編集・削除できるデータがまだありません。")
-    else:
-        st.markdown("""
-        <div class="lab-card">
-            <div class="lab-card-title">編集・削除について</div>
-            <div class="lab-card-body">
-                登録済みの実験データを後から修正できます。
-                間違えて登録したデータは、確認チェックを入れてから削除できます。
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-        section_header("🛠️", "編集する実験を選択", "過去データを修正・削除できます")
-
-        edit_exp_list = df["実験No"].tolist()
-
-        edit_selected_no = st.selectbox(
-            "編集・削除する実験No",
-            edit_exp_list,
-            key="edit_selected_no"
+    with tab1:
+        st.subheader("豆データ")
+        keyword = st.text_input("豆データ検索", key="bean_search", placeholder="豆名、産地、精製方法など")
+        df = beans_df.copy()
+        if keyword:
+            mask = df.astype(str).apply(lambda x: x.str.contains(keyword, case=False, na=False)).any(axis=1)
+            df = df[mask]
+        st.dataframe(df, use_container_width=True)
+        st.download_button(
+            "豆データをCSVでダウンロード",
+            data=beans_df.to_csv(index=False, encoding="utf-8-sig"),
+            file_name="beans.csv",
+            mime="text/csv",
         )
 
-        edit_idx = df.index[df["実験No"] == edit_selected_no][0]
-        edit_target = df.loc[edit_idx]
-
-        st.markdown(f"""
-        <div class="condition-box">
-            <div class="condition-title">実験No.{esc(edit_target["実験No"])} の現在データ</div>
-            <div class="condition-text">
-                日付：{esc(edit_target["日付"])}<br>
-                豆：{esc(edit_target["豆の種類"])} ／ 焙煎度：{esc(edit_target["焙煎度"])} ／ 挽き目：{esc(edit_target["挽き目"])}<br>
-                ドリッパー：{esc(edit_target["ドリッパー"])} ／ フィルター：{esc(edit_target["フィルター"])} ／ 煎れ方：{esc(edit_target["煎れ方"])}<br>
-                TDS：{esc(edit_target["TDS%"])} ／ 抽出収率：{esc(edit_target["抽出収率%"])} ／ コメント：{esc(edit_target["コメント"])}
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-        with st.form("edit_form"):
-            edit_col1, edit_col2 = st.columns(2)
-
-            with edit_col1:
-                section_header("☕", "基本条件を編集", "豆・湯量・鮮度条件")
-
-                edit_date = st.text_input("日付", value=str(edit_target["日付"]))
-                edit_bean_type = st.text_input("豆の種類", value=str(edit_target["豆の種類"]))
-
-                edit_roast_level = st.selectbox(
-                    "焙煎度（1〜8）",
-                    [1, 2, 3, 4, 5, 6, 7, 8],
-                    index=max(0, min(7, safe_int(edit_target["焙煎度"], 5) - 1))
-                )
-                st.caption(f"焙煎度{edit_roast_level}：{ROAST_NAMES[edit_roast_level]}")
-
-                edit_coffee_weight = st.text_input("豆量g", value=str(edit_target["豆量g"]))
-                edit_water_weight = st.text_input("湯量g", value=str(edit_target["湯量g"]))
-                edit_water_temp = st.text_input("湯温℃", value=str(edit_target["湯温℃"]))
-
-                edit_days_after_roast = st.text_input("焙煎後日数", value=str(edit_target["焙煎後日数"]))
-                edit_days_after_open = st.text_input("開封後日数", value=str(edit_target["開封後日数"]))
-
-            with edit_col2:
-                section_header("🧪", "抽出条件を編集", "器具・注湯・蒸らし条件")
-
-                edit_grind_size = st.text_input("挽き目", value=str(edit_target["挽き目"]))
-                edit_dripper = st.text_input("ドリッパー", value=str(edit_target["ドリッパー"]))
-                edit_filter_type = st.text_input("フィルター", value=str(edit_target["フィルター"]))
-                edit_pour_method = st.text_input("煎れ方", value=str(edit_target["煎れ方"]))
-                edit_pour_memo = st.text_area("煎れ方メモ", value=str(edit_target["煎れ方メモ"]))
-
-                bloom_options = ["あり", "なし", ""]
-                current_bloom = str(edit_target["蒸らし有無"])
-                bloom_index = bloom_options.index(current_bloom) if current_bloom in bloom_options else 0
-
-                edit_bloom = st.selectbox(
-                    "蒸らし有無",
-                    bloom_options,
-                    index=bloom_index
-                )
-
-                edit_bloom_time = st.text_input("蒸らし時間秒", value=str(edit_target["蒸らし時間秒"]))
-                edit_bloom_water = st.text_input("蒸らし湯量g", value=str(edit_target["蒸らし湯量g"]))
-
-            st.markdown("---")
-
-            result_col1, result_col2 = st.columns(2)
-
-            with result_col1:
-                section_header("📐", "測定結果を編集", "抽出量・TDS・抽出収率")
-
-                edit_beverage_weight = st.text_input("抽出液量g", value=str(edit_target["抽出液量g"]))
-                edit_brew_time = st.text_input("抽出時間秒", value=str(edit_target["抽出時間秒"]))
-                edit_tds = st.text_input("TDS%", value=str(edit_target["TDS%"]))
-
-                recalculated_yield = calc_yield_from_text(
-                    edit_tds,
-                    edit_beverage_weight,
-                    edit_coffee_weight,
-                    current_value=str(edit_target["抽出収率%"])
-                )
-
-                st.info(f"保存時の抽出収率：{recalculated_yield}")
-
-            with result_col2:
-                section_header("🌿", "味評価を編集", "1〜5で再入力")
-
-                rating_options = ["", "1", "2", "3", "4", "5"]
-
-                edit_acidity = st.selectbox("酸味", rating_options, index=rating_index(edit_target["酸味"]))
-                edit_sweetness = st.selectbox("甘味", rating_options, index=rating_index(edit_target["甘味"]))
-                edit_bitterness = st.selectbox("苦味", rating_options, index=rating_index(edit_target["苦味"]))
-                edit_off_flavor = st.selectbox("雑味", rating_options, index=rating_index(edit_target["雑味"]))
-                edit_aroma = st.selectbox("香り", rating_options, index=rating_index(edit_target["香り"]))
-                edit_drinkability = st.selectbox("飲みやすさ", rating_options, index=rating_index(edit_target["飲みやすさ"]))
-
-            edit_comment = st.text_area("コメント", value=str(edit_target["コメント"]))
-
-            update_submitted = st.form_submit_button("この内容で更新する")
-
-        if update_submitted:
-            df.at[edit_idx, "日付"] = edit_date
-            df.at[edit_idx, "豆の種類"] = edit_bean_type
-            df.at[edit_idx, "焙煎度"] = edit_roast_level
-            df.at[edit_idx, "豆量g"] = edit_coffee_weight
-            df.at[edit_idx, "湯量g"] = edit_water_weight
-            df.at[edit_idx, "湯温℃"] = edit_water_temp
-
-            df.at[edit_idx, "挽き目"] = edit_grind_size
-            df.at[edit_idx, "ドリッパー"] = edit_dripper
-            df.at[edit_idx, "フィルター"] = edit_filter_type
-            df.at[edit_idx, "煎れ方"] = edit_pour_method
-            df.at[edit_idx, "煎れ方メモ"] = edit_pour_memo
-
-            df.at[edit_idx, "蒸らし有無"] = edit_bloom
-            df.at[edit_idx, "蒸らし時間秒"] = edit_bloom_time
-            df.at[edit_idx, "蒸らし湯量g"] = edit_bloom_water
-
-            df.at[edit_idx, "焙煎後日数"] = edit_days_after_roast
-            df.at[edit_idx, "開封後日数"] = edit_days_after_open
-
-            df.at[edit_idx, "抽出液量g"] = edit_beverage_weight
-            df.at[edit_idx, "抽出時間秒"] = edit_brew_time
-            df.at[edit_idx, "TDS%"] = edit_tds
-            df.at[edit_idx, "抽出収率%"] = recalculated_yield
-
-            df.at[edit_idx, "酸味"] = edit_acidity
-            df.at[edit_idx, "甘味"] = edit_sweetness
-            df.at[edit_idx, "苦味"] = edit_bitterness
-            df.at[edit_idx, "雑味"] = edit_off_flavor
-            df.at[edit_idx, "香り"] = edit_aroma
-            df.at[edit_idx, "飲みやすさ"] = edit_drinkability
-            df.at[edit_idx, "コメント"] = edit_comment
-
-            save_data(df)
-            st.success(f"実験No.{edit_selected_no} を更新しました。")
-            st.rerun()
-
-        st.markdown("""
-        <div class="danger-card">
-            <div class="lab-card-title">削除エリア</div>
-            <div class="lab-card-body">
-                削除すると、この実験データはGoogleスプレッドシートから消えます。
-                不安な場合は、先にスプレッドシートをコピーしてバックアップしてください。
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-        confirm_delete = st.checkbox(
-            f"実験No.{edit_selected_no} を削除することを確認しました"
+    with tab2:
+        st.subheader("焙煎ログ")
+        keyword = st.text_input("焙煎ログ検索", key="roast_search", placeholder="豆名、焙煎速度、メモなど")
+        df = roasts_df.copy()
+        if keyword:
+            mask = df.astype(str).apply(lambda x: x.str.contains(keyword, case=False, na=False)).any(axis=1)
+            df = df[mask]
+        st.dataframe(df, use_container_width=True)
+        st.download_button(
+            "焙煎ログをCSVでダウンロード",
+            data=roasts_df.to_csv(index=False, encoding="utf-8-sig"),
+            file_name="roasts.csv",
+            mime="text/csv",
         )
 
-        if st.button("この実験データを削除する"):
-            if confirm_delete:
-                df = df[df["実験No"] != edit_selected_no]
-                save_data(df)
-                st.success(f"実験No.{edit_selected_no} を削除しました。")
-                st.rerun()
-            else:
-                st.warning("削除するには確認チェックを入れてください。")
+    with tab3:
+        st.subheader("抽出ログ")
+        keyword = st.text_input("抽出ログ検索", key="brew_search", placeholder="豆名、ドリッパー、味メモなど")
+        df = brews_df.copy()
+        if keyword:
+            mask = df.astype(str).apply(lambda x: x.str.contains(keyword, case=False, na=False)).any(axis=1)
+            df = df[mask]
+        st.dataframe(df, use_container_width=True)
+        st.download_button(
+            "抽出ログをCSVでダウンロード",
+            data=brews_df.to_csv(index=False, encoding="utf-8-sig"),
+            file_name="brews.csv",
+            mime="text/csv",
+        )
