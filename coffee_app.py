@@ -1,9 +1,10 @@
-import os
 import uuid
 from datetime import date, datetime
 
+import gspread
 import pandas as pd
 import streamlit as st
+from google.oauth2.service_account import Credentials
 
 
 # =========================
@@ -15,16 +16,16 @@ st.set_page_config(
     layout="wide",
 )
 
-DATA_DIR = "data"
-BEANS_FILE = os.path.join(DATA_DIR, "beans.csv")
-ROASTS_FILE = os.path.join(DATA_DIR, "roasts.csv")
-BREWS_FILE = os.path.join(DATA_DIR, "brews.csv")
+SPREADSHEET_ID = "1PdsJrIgmMflcaQAaKceCYcomwPPG_Uzgnx3ISPl0Ek"
 
-os.makedirs(DATA_DIR, exist_ok=True)
+LEGACY_SHEET_NAME = "シート1"
+BEANS_SHEET_NAME = "beans"
+ROASTS_SHEET_NAME = "roasts"
+BREWS_SHEET_NAME = "brews"
 
 
 # =========================
-# CSVの列定義
+# 列定義
 # =========================
 BEANS_COLUMNS = [
     "bean_id",
@@ -90,24 +91,100 @@ BREWS_COLUMNS = [
     "created_at",
 ]
 
+LEGACY_COLUMNS = [
+    "実験No",
+    "日付",
+    "豆の種類",
+    "焙煎度",
+    "豆量g",
+    "湯量g",
+    "湯温℃",
+    "挽き目",
+    "ドリッパー",
+    "フィルター",
+    "煎れ方",
+    "煎れ方メモ",
+    "蒸らし有無",
+    "蒸らし時間秒",
+    "蒸らし湯量g",
+    "焙煎後日数",
+    "開封後日数",
+    "抽出液量g",
+    "抽出時間秒",
+    "TDS%",
+    "抽出収率%",
+    "酸味",
+    "甘味",
+    "苦味",
+    "雑味",
+    "香り",
+    "飲みやすさ",
+    "コメント",
+]
+
+
+# =========================
+# Google Sheets 接続
+# =========================
+@st.cache_resource
+def connect_gsheet():
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive",
+    ]
+
+    creds = Credentials.from_service_account_info(
+        st.secrets["gcp_service_account"],
+        scopes=scopes,
+    )
+    client = gspread.authorize(creds)
+    return client.open_by_key(SPREADSHEET_ID)
+
+
+def get_or_create_worksheet(spreadsheet, sheet_name: str, columns: list[str]):
+    try:
+        ws = spreadsheet.worksheet(sheet_name)
+    except gspread.WorksheetNotFound:
+        ws = spreadsheet.add_worksheet(title=sheet_name, rows=1000, cols=max(30, len(columns)))
+        ws.append_row(columns)
+        return ws
+
+    values = ws.get_all_values()
+    if not values:
+        ws.append_row(columns)
+    return ws
+
+
+def worksheet_to_df(ws, columns: list[str]) -> pd.DataFrame:
+    values = ws.get_all_records()
+    df = pd.DataFrame(values)
+
+    if df.empty:
+        return pd.DataFrame(columns=columns)
+
+    for col in columns:
+        if col not in df.columns:
+            df[col] = ""
+
+    return df[columns]
+
+
+def append_row(ws, columns: list[str], row_dict: dict):
+    row = [row_dict.get(col, "") for col in columns]
+    ws.append_row(row, value_input_option="USER_ENTERED")
+
+
+def update_worksheet_all(ws, df: pd.DataFrame, columns: list[str]):
+    ws.clear()
+    ws.append_row(columns)
+    if not df.empty:
+        rows = df[columns].astype(str).values.tolist()
+        ws.append_rows(rows, value_input_option="USER_ENTERED")
+
 
 # =========================
 # 共通関数
 # =========================
-def load_csv(path: str, columns: list[str]) -> pd.DataFrame:
-    if os.path.exists(path):
-        df = pd.read_csv(path)
-        for col in columns:
-            if col not in df.columns:
-                df[col] = ""
-        return df[columns]
-    return pd.DataFrame(columns=columns)
-
-
-def save_csv(df: pd.DataFrame, path: str) -> None:
-    df.to_csv(path, index=False, encoding="utf-8-sig")
-
-
 def make_id(prefix: str) -> str:
     today = datetime.now().strftime("%Y%m%d")
     short = uuid.uuid4().hex[:6].upper()
@@ -127,7 +204,7 @@ def safe_int(value, default=0) -> int:
     try:
         if value == "" or pd.isna(value):
             return default
-        return int(value)
+        return int(float(value))
     except Exception:
         return default
 
@@ -166,24 +243,87 @@ def get_roast_label(row: pd.Series) -> str:
     return f"{roast_id} / {bean_name} / {roast_date} / {speed} / Agtron {agtron}"
 
 
+def convert_legacy_to_brews(legacy_df: pd.DataFrame) -> pd.DataFrame:
+    rows = []
+    for _, r in legacy_df.iterrows():
+        exp_no = str(r.get("実験No", "")).strip()
+        if exp_no == "":
+            continue
+
+        dose_g = safe_float(r.get("豆量g"))
+        water_g = safe_float(r.get("湯量g"))
+        beverage_g = safe_float(r.get("抽出液量g"))
+        tds = safe_float(r.get("TDS%"))
+
+        rows.append({
+            "brew_id": f"LEGACY-{exp_no}",
+            "roast_id": "LEGACY",
+            "bean_name": r.get("豆の種類", ""),
+            "brew_date": r.get("日付", ""),
+            "days_after_roast": r.get("焙煎後日数", ""),
+            "dripper": r.get("ドリッパー", ""),
+            "filter_type": r.get("フィルター", ""),
+            "grind_size": r.get("挽き目", ""),
+            "dose_g": dose_g,
+            "water_g": water_g,
+            "brew_ratio": calc_brew_ratio(water_g, dose_g),
+            "water_temp_c": r.get("湯温℃", ""),
+            "brew_time_sec": r.get("抽出時間秒", ""),
+            "beverage_g": beverage_g,
+            "tds_percent": tds,
+            "extraction_yield_percent": r.get("抽出収率%", ""),
+            "acidity_score": r.get("酸味", ""),
+            "sweetness_score": r.get("甘味", ""),
+            "bitterness_score": r.get("苦味", ""),
+            "aroma_score": r.get("香り", ""),
+            "body_score": "",
+            "aftertaste_score": "",
+            "misc_score": r.get("雑味", ""),
+            "overall_score": r.get("飲みやすさ", ""),
+            "brew_memo": r.get("コメント", ""),
+            "created_at": "legacy_import",
+        })
+    return pd.DataFrame(rows, columns=BREWS_COLUMNS)
+
+
 # =========================
 # データ読み込み
 # =========================
-beans_df = load_csv(BEANS_FILE, BEANS_COLUMNS)
-roasts_df = load_csv(ROASTS_FILE, ROASTS_COLUMNS)
-brews_df = load_csv(BREWS_FILE, BREWS_COLUMNS)
+try:
+    spreadsheet = connect_gsheet()
+
+    beans_ws = get_or_create_worksheet(spreadsheet, BEANS_SHEET_NAME, BEANS_COLUMNS)
+    roasts_ws = get_or_create_worksheet(spreadsheet, ROASTS_SHEET_NAME, ROASTS_COLUMNS)
+    brews_ws = get_or_create_worksheet(spreadsheet, BREWS_SHEET_NAME, BREWS_COLUMNS)
+
+    beans_df = worksheet_to_df(beans_ws, BEANS_COLUMNS)
+    roasts_df = worksheet_to_df(roasts_ws, ROASTS_COLUMNS)
+    brews_df = worksheet_to_df(brews_ws, BREWS_COLUMNS)
+
+    try:
+        legacy_ws = spreadsheet.worksheet(LEGACY_SHEET_NAME)
+        legacy_values = legacy_ws.get_all_records()
+        legacy_df = pd.DataFrame(legacy_values)
+    except Exception:
+        legacy_df = pd.DataFrame(columns=LEGACY_COLUMNS)
+
+except Exception as e:
+    st.error("Googleスプレッドシートへの接続に失敗しました。")
+    st.exception(e)
+    st.stop()
 
 
 # =========================
 # サイドバー
 # =========================
 st.sidebar.title("☕ Roast & Brew Lab")
-st.sidebar.write("焙煎ログと抽出ログをつなげて、味の変化を研究するアプリです。")
+st.sidebar.write("焙煎ログと抽出ログをGoogleスプレッドシートに保存します。")
 
 page = st.sidebar.radio(
     "ページ選択",
     [
         "ホーム",
+        "旧データ取り込み",
         "豆マスタ登録",
         "焙煎ログ登録",
         "抽出ログ登録",
@@ -193,7 +333,7 @@ page = st.sidebar.radio(
 )
 
 st.sidebar.divider()
-st.sidebar.caption("CSVは data フォルダに自動保存されます。")
+st.sidebar.caption("保存先：Googleスプレッドシート coffee_log")
 
 
 # =========================
@@ -203,10 +343,11 @@ if page == "ホーム":
     st.title("Roast & Brew Lab ☕")
     st.write("焙煎条件、豆色、Agtron値、抽出条件、味の評価をつなげて記録する研究ログアプリです。")
 
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("登録豆数", len(beans_df))
     c2.metric("焙煎ログ数", len(roasts_df))
-    c3.metric("抽出ログ数", len(brews_df))
+    c3.metric("新抽出ログ数", len(brews_df))
+    c4.metric("旧抽出ログ数", len(legacy_df))
 
     st.subheader("データの流れ")
     st.code(
@@ -221,7 +362,40 @@ if page == "ホーム":
         """.strip()
     )
 
-    st.info("まずは『豆マスタ登録』→『焙煎ログ登録』→『抽出ログ登録』の順番で使います。")
+    st.info("今までのデータは『旧データ取り込み』から brews シートに変換できます。")
+
+
+# =========================
+# 旧データ取り込み
+# =========================
+elif page == "旧データ取り込み":
+    st.title("旧データ取り込み")
+    st.write("今までのGoogleスプレッドシートの抽出ログを、新しい brews シートに変換します。")
+
+    if legacy_df.empty:
+        st.warning("旧データが見つかりませんでした。シート名が『シート1』ではない可能性があります。")
+    else:
+        st.subheader("旧データプレビュー")
+        st.dataframe(legacy_df, use_container_width=True)
+
+        st.subheader("変換後プレビュー")
+        converted_df = convert_legacy_to_brews(legacy_df)
+        st.dataframe(converted_df, use_container_width=True)
+
+        already_imported = brews_df[brews_df["created_at"].astype(str) == "legacy_import"] if not brews_df.empty else pd.DataFrame()
+        st.write(f"現在 brews に取り込み済みの旧データ数：{len(already_imported)} 件")
+
+        if st.button("旧データを brews シートに取り込む"):
+            current_ids = set(brews_df["brew_id"].astype(str)) if not brews_df.empty else set()
+            add_df = converted_df[~converted_df["brew_id"].astype(str).isin(current_ids)]
+
+            if add_df.empty:
+                st.info("追加する新しい旧データはありません。")
+            else:
+                new_brews_df = pd.concat([brews_df, add_df], ignore_index=True)
+                update_worksheet_all(brews_ws, new_brews_df, BREWS_COLUMNS)
+                st.success(f"{len(add_df)}件を brews シートに取り込みました。")
+                st.rerun()
 
 
 # =========================
@@ -252,8 +426,7 @@ elif page == "豆マスタ登録":
                 "memo": memo.strip(),
                 "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             }
-            beans_df = pd.concat([beans_df, pd.DataFrame([new_row])], ignore_index=True)
-            save_csv(beans_df, BEANS_FILE)
+            append_row(beans_ws, BEANS_COLUMNS, new_row)
             st.success("豆を登録しました。")
             st.rerun()
 
@@ -345,8 +518,7 @@ elif page == "焙煎ログ登録":
                     "roast_memo": roast_memo.strip(),
                     "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 }
-                roasts_df = pd.concat([roasts_df, pd.DataFrame([new_row])], ignore_index=True)
-                save_csv(roasts_df, ROASTS_FILE)
+                append_row(roasts_ws, ROASTS_COLUMNS, new_row)
                 st.success("焙煎ログを登録しました。")
                 st.rerun()
 
@@ -377,8 +549,11 @@ elif page == "抽出ログ登録":
 
             c1, c2, c3 = st.columns(3)
             brew_date = c1.date_input("抽出日", value=date.today())
-            roast_date_value = datetime.strptime(str(selected_roast["roast_date"]), "%Y-%m-%d").date()
-            days_after_roast = (brew_date - roast_date_value).days
+            try:
+                roast_date_value = datetime.strptime(str(selected_roast["roast_date"]), "%Y-%m-%d").date()
+                days_after_roast = (brew_date - roast_date_value).days
+            except Exception:
+                days_after_roast = 0
             c2.metric("焙煎後日数", f"{days_after_roast}日")
             c3.write("使用豆")
             c3.write(selected_roast["bean_name"])
@@ -459,8 +634,7 @@ elif page == "抽出ログ登録":
                     "brew_memo": brew_memo.strip(),
                     "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 }
-                brews_df = pd.concat([brews_df, pd.DataFrame([new_row])], ignore_index=True)
-                save_csv(brews_df, BREWS_FILE)
+                append_row(brews_ws, BREWS_COLUMNS, new_row)
                 st.success("抽出ログを登録しました。")
                 st.rerun()
 
@@ -478,15 +652,24 @@ elif page == "分析":
     st.title("分析")
     st.write("焙煎条件と抽出結果・味の関係を見ます。")
 
-    if roasts_df.empty or brews_df.empty:
-        st.warning("分析には焙煎ログと抽出ログの両方が必要です。")
+    if brews_df.empty:
+        st.warning("分析には抽出ログが必要です。")
     else:
-        merged = brews_df.merge(
-            roasts_df,
-            on=["roast_id", "bean_name"],
-            how="left",
-            suffixes=("_brew", "_roast"),
-        )
+        if not roasts_df.empty:
+            merged = brews_df.merge(
+                roasts_df,
+                on=["roast_id", "bean_name"],
+                how="left",
+                suffixes=("_brew", "_roast"),
+            )
+        else:
+            merged = brews_df.copy()
+            merged["roast_speed"] = "未登録"
+            merged["agtron_value"] = ""
+            merged["bean_color_score"] = ""
+            merged["total_roast_time_sec"] = ""
+            merged["development_time_sec"] = ""
+            merged["weight_loss_percent"] = ""
 
         numeric_cols = [
             "agtron_value",
@@ -541,8 +724,9 @@ elif page == "分析":
                 "extraction_yield_percent",
             ],
         )
-        chart_df = speed_summary.set_index("roast_speed")[[chart_target]]
-        st.bar_chart(chart_df)
+        if not speed_summary.empty:
+            chart_df = speed_summary.set_index("roast_speed")[[chart_target]]
+            st.bar_chart(chart_df)
 
         st.subheader("散布図で関係を見る")
         c1, c2 = st.columns(2)
@@ -575,7 +759,10 @@ elif page == "分析":
         )
 
         scatter_df = merged[[x_col, y_col, "roast_speed", "bean_name"]].dropna()
-        st.scatter_chart(scatter_df, x=x_col, y=y_col)
+        if not scatter_df.empty:
+            st.scatter_chart(scatter_df, x=x_col, y=y_col)
+        else:
+            st.info("散布図に使えるデータがまだありません。")
 
         st.subheader("結合済みデータ")
         st.dataframe(merged, use_container_width=True)
@@ -594,49 +781,40 @@ elif page == "分析":
 elif page == "データ一覧・検索":
     st.title("データ一覧・検索")
 
-    tab1, tab2, tab3 = st.tabs(["豆", "焙煎ログ", "抽出ログ"])
+    tab1, tab2, tab3, tab4 = st.tabs(["旧データ", "豆", "焙煎ログ", "抽出ログ"])
 
     with tab1:
+        st.subheader("旧抽出データ")
+        keyword = st.text_input("旧データ検索", key="legacy_search", placeholder="豆名、コメントなど")
+        df = legacy_df.copy()
+        if keyword and not df.empty:
+            mask = df.astype(str).apply(lambda x: x.str.contains(keyword, case=False, na=False)).any(axis=1)
+            df = df[mask]
+        st.dataframe(df, use_container_width=True)
+
+    with tab2:
         st.subheader("豆データ")
         keyword = st.text_input("豆データ検索", key="bean_search", placeholder="豆名、産地、精製方法など")
         df = beans_df.copy()
-        if keyword:
+        if keyword and not df.empty:
             mask = df.astype(str).apply(lambda x: x.str.contains(keyword, case=False, na=False)).any(axis=1)
             df = df[mask]
         st.dataframe(df, use_container_width=True)
-        st.download_button(
-            "豆データをCSVでダウンロード",
-            data=beans_df.to_csv(index=False, encoding="utf-8-sig"),
-            file_name="beans.csv",
-            mime="text/csv",
-        )
 
-    with tab2:
+    with tab3:
         st.subheader("焙煎ログ")
         keyword = st.text_input("焙煎ログ検索", key="roast_search", placeholder="豆名、焙煎速度、メモなど")
         df = roasts_df.copy()
-        if keyword:
+        if keyword and not df.empty:
             mask = df.astype(str).apply(lambda x: x.str.contains(keyword, case=False, na=False)).any(axis=1)
             df = df[mask]
         st.dataframe(df, use_container_width=True)
-        st.download_button(
-            "焙煎ログをCSVでダウンロード",
-            data=roasts_df.to_csv(index=False, encoding="utf-8-sig"),
-            file_name="roasts.csv",
-            mime="text/csv",
-        )
 
-    with tab3:
+    with tab4:
         st.subheader("抽出ログ")
         keyword = st.text_input("抽出ログ検索", key="brew_search", placeholder="豆名、ドリッパー、味メモなど")
         df = brews_df.copy()
-        if keyword:
+        if keyword and not df.empty:
             mask = df.astype(str).apply(lambda x: x.str.contains(keyword, case=False, na=False)).any(axis=1)
             df = df[mask]
         st.dataframe(df, use_container_width=True)
-        st.download_button(
-            "抽出ログをCSVでダウンロード",
-            data=brews_df.to_csv(index=False, encoding="utf-8-sig"),
-            file_name="brews.csv",
-            mime="text/csv",
-        )
